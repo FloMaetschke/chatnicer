@@ -71,7 +71,7 @@ Gemessen mit VS 2022 / Windows SDK 10.0.26100:
 | Variante | Größe | Laufzeitabhängigkeit |
 |---|---:|---|
 | statische CRT + Exceptions (`build.bat compat`) | 194.048 B | keine |
-| **Standard-Release** | **101.376 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
+| **Standard-Release** | **102.400 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
 | dynamische CRT (`/MD`) | 87.552 B | VC++-Redistributable erforderlich |
 
 Der entscheidende Trick ist `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`: die vcruntime
@@ -255,7 +255,7 @@ bleibt also bedienbar.
 
 Auf Windows 11 (Build 26200), VS 2022, Ollama 0.21.2 gebaut und geprüft:
 
-* Release-Build fehlerfrei bei `/W4`, 99 KB (101.376 Bytes) – über `build.bat` und MSBuild
+* Release-Build fehlerfrei bei `/W4`, 100 KB (102.400 Bytes) – über `build.bat` und MSBuild
 * 43 automatisierte Tests, davon der Großteil live gegen das lokale Ollama:
   JSON-Erzeugung, XML-Extraktion inklusive aller real beobachteten kaputten
   Tag-Schreibweisen, Denkprozess-Filter, `config.ini`-Roundtrip mit Umlauten,

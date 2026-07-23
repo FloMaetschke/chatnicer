@@ -12,7 +12,7 @@ WinHTTP, x64, keine externen Bibliotheken. Bedienung und Konfiguration stehen im
 ## Build
 
 ```bat
-build.bat            :: Standard-Release -> build\ChatNicer.exe (99.328 B)
+build.bat            :: Standard-Release -> build\ChatNicer.exe (102.400 B)
 build.bat compat     :: statische CRT inkl. Exceptions (194.048 B)
 ```
 
@@ -34,7 +34,7 @@ Get-Process ChatNicer -ErrorAction SilentlyContinue | Stop-Process -Force
 
 ## Harte Randbedingungen
 
-**Größenbudget < 200 KB** (204.800 Bytes). Aktuell 101.376 Bytes – rund 100 KB
+**Größenbudget < 200 KB** (204.800 Bytes). Aktuell 102.400 Bytes – rund 100 KB
 Reserve. Erreicht wird das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`
 (vcruntime statisch, UCRT dynamisch – `ucrtbase.dll` gehört ab Windows 10 zum
 System, deshalb kein VC++-Redist), dazu `/O1 /Os`, `/GL`+`/LTCG`, `/GR-`, `/GS-`,

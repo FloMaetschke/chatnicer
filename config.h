@@ -36,7 +36,11 @@ static const wchar_t* kDefaultModel = L"qwen3:4b-instruct";
 // sich die eigentliche Antwort im Code herausschneiden - eventuelle Vorreden
 // ("Hier ist mein Versuch:") landen erst gar nicht in der Zwischenablage.
 // Genau diese Variante hat im Test gegen llama3.2:3b am besten abgeschnitten;
-// mehr Beispiele im Prompt haben die Tag-Ausgabe messbar verschlechtert.
+// mehr Beispiele im Prompt haben die Tag-Ausgabe messbar verschlechtert. Die
+// Grammatikregeln sind deshalb als Regeln formuliert und nicht als weitere
+// Tag-Beispiele; das einzelne deutsche Inline-Zitat ("Die Zeit wird es zeigen")
+// ist Absicht - kleine Modelle reproduzieren feste Wendungen sonst verstuemmelt
+// und "korrekte Grammatik" allein faengt das nicht ab.
 static const wchar_t* kDefaultPrompt =
     L"You are a text rewriting tool, not a conversational assistant.\n"
     L"\n"
@@ -52,6 +56,14 @@ static const wchar_t* kDefaultPrompt =
     L"- Keep meaning, facts, numbers and the speaker's perspective unchanged.\n"
     L"- A question stays a question, a request stays a request, a complaint stays a\n"
     L"  complaint - only better worded.\n"
+    L"- Every sentence must be grammatically complete. Never drop an obligatory object\n"
+    L"  or pronoun: \"Die Zeit wird es zeigen\", never \"Die Zeit wird zeigen\".\n"
+    L"- Use fixed expressions only in their exact standard form. If you are not sure of\n"
+    L"  the exact wording, say it plainly in your own words instead of guessing.\n"
+    L"- Add no words the input does not carry, especially hedges and intensifiers\n"
+    L"  (\"eher\", \"sogar\", \"durchaus\", \"sehr\").\n"
+    L"- Read your rewrite once before you output it and fix every sentence a native\n"
+    L"  speaker would not say that way.\n"
     L"- Put your entire answer inside <rewritten_text> tags and write nothing outside them.\n"
     L"\n"
     L"Example:\n"
