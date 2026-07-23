@@ -1,8 +1,9 @@
 # ChatNicer
 
-Ein sehr leichtgewichtiges Windows-Tray-Programm (**99 KB**, reines Win32 + WinHTTP):
+Ein sehr leichtgewichtiges Windows-Tray-Programm (**107 KB**, reines Win32 + WinHTTP):
 markierten Text per Hotkey an ein lokales **Ollama**-Modell schicken und die Antwort
-direkt an der Cursorposition wieder einfügen.
+direkt an der Cursorposition wieder einfügen – oder sie live tippen lassen, während
+das Modell sie schreibt.
 
 Keine externen Abhängigkeiten – kein .NET, kein curl, keine JSON-Bibliothek, kein
 VC++-Redistributable. Der Text verlässt den Rechner nicht.
@@ -21,6 +22,27 @@ Mit einem 3B/4B-Modell dauert das rund **eine Sekunde**.
 
 Das Tray-Icon zeigt den Zustand: **blau** = bereit, **orange** = Modell arbeitet,
 **rot** = Fehler (mit Benachrichtigung im Klartext).
+
+### Tippmodus (optional)
+
+Mit der Einstellung **„Antwort live tippen statt einfügen (Streaming)"** ändert
+sich Schritt 3: Statt auf die fertige Antwort zu warten und sie einzufügen, holt
+ChatNicer sie als Stream und tippt jedes Token sofort – so, wie man es aus dem
+Ollama-Chat kennt. Gemessen an einem 271 Zeichen langen Absatz: der Text baut
+sich über rund 1,3 Sekunden hinweg auf, statt nach 1,5 Sekunden auf einen Schlag
+dazustehen.
+
+Zwei Dinge, die man dabei wissen sollte:
+
+* **Zeilenumbrüche werden als ENTER getippt.** In einem Chat-Eingabefeld
+  (Teams, Slack, WhatsApp Web) schickt das die Nachricht ab. Für mehrzeilige
+  Texte in solchen Feldern ist der Einfügemodus die sichere Wahl.
+* **Kein Zurück ab dem ersten Zeichen.** Bricht die Verbindung mitten in der
+  Antwort ab, bleibt der bereits getippte Teil stehen. Die Fehlermeldung sagt
+  das ausdrücklich.
+
+Die Zwischenablage bekommt im Tippmodus nie die Antwort zu sehen – nur den
+markierten Originaltext, den ChatNicer ohnehin kopieren muss.
 
 ---
 
@@ -44,7 +66,7 @@ Zur Modellwahl siehe unten; wichtig ist die Endung `-instruct`.
 |---|---|
 | `main.cpp` | Tray-Icon, Kontextmenü, Einstellungsfenster, Hotkey, Clipboard, Ablaufsteuerung |
 | `config.h` | `config.ini`, Standard-System-Prompt, Hotkey-Parsing |
-| `network.h` | WinHTTP, Ollama-API, JSON-Erzeugung und -Auswertung |
+| `network.h` | WinHTTP, Ollama-API, JSON-Erzeugung und -Auswertung, Streaming-Filter |
 | `ChatNicer.sln` / `.vcxproj` | Visual-Studio-2022-Projekt (x64, Debug + Release) |
 | `build.bat` | Build ohne IDE – sucht die VS-Buildtools selbstständig |
 
@@ -59,8 +81,8 @@ Die Icons werden zur Laufzeit gezeichnet, deshalb gibt es **keine `.rc`-Datei**.
 **Ohne IDE:**
 
 ```bat
-build.bat            :: Standard, 99 KB  -> build\ChatNicer.exe
-build.bat compat     :: komplett statische CRT inkl. Exceptions (190 KB)
+build.bat            :: Standard, 107 KB -> build\ChatNicer.exe
+build.bat compat     :: komplett statische CRT inkl. Exceptions (200 KB)
 ```
 
 ### Warum die EXE so klein ist
@@ -70,9 +92,12 @@ Gemessen mit VS 2022 / Windows SDK 10.0.26100:
 
 | Variante | Größe | Laufzeitabhängigkeit |
 |---|---:|---|
-| statische CRT + Exceptions (`build.bat compat`) | 194.048 B | keine |
-| **Standard-Release** | **102.400 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
-| dynamische CRT (`/MD`) | 87.552 B | VC++-Redistributable erforderlich |
+| statische CRT + Exceptions (`build.bat compat`) | 204.288 B | keine |
+| **Standard-Release** | **109.056 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
+| dynamische CRT (`/MD`) | 97.280 B | VC++-Redistributable erforderlich |
+
+Die compat-Variante nutzt das Budget inzwischen bis auf 512 Bytes aus; der
+Standard-Release hat rund 93 KB Reserve.
 
 Der entscheidende Trick ist `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`: die vcruntime
 wird statisch eingebunden, die Universal CRT dagegen dynamisch – sie ist seit
@@ -105,6 +130,7 @@ SystemPrompt=...               ; siehe unten
 Temperature=0.2                ; niedrig = weniger Abschweifen
 Hotkey=CTRL+SHIFT+SPACE
 RestoreClipboard=1
+TypingInput=0                  ; 1 = Antwort live tippen statt einfügen
 TimeoutMs=120000
 ```
 
@@ -210,6 +236,8 @@ und dann gar keine Antwort mehr geschrieben – `content` war leer. ChatNicer
 erkennt das (`done_reason` ist `length` und `content` leer) und fragt genau
 **einmal ohne Deckel** nach. Das dauert dann zwar spürbar länger, ist aber besser
 als gar nichts einzufügen. Mit einem `-instruct`-Modell tritt der Fall nicht auf.
+Im Tippmodus gilt dasselbe: Solange kein einziges Zeichen getippt wurde, ist der
+Zweitversuch gefahrlos – beide Wege teilen sich denselben Code.
 
 ---
 
@@ -229,6 +257,10 @@ Das Öffnen der Zwischenablage wird bis zu 15-mal wiederholt, falls ein anderes
 Programm sie belegt. Die Anfrage läuft in einem eigenen Thread, das Programm
 bleibt also bedienbar.
 
+Im **Tippmodus** gilt „nichts eingefügt" nur bis zum ersten Zeichen. Danach
+lässt sich ein Abbruch nicht mehr rückgängig machen; die Meldung lautet dann
+„Abgebrochen, getippter Text bleibt stehen: …".
+
 ---
 
 ## Bekannte Grenzen
@@ -240,6 +272,13 @@ bleibt also bedienbar.
   `qwen3:4b-instruct` in den Testläufen nicht mehr – ausgeschlossen ist es nicht.
 * **Nur Text:** Gesichert und wiederhergestellt wird ausschließlich
   `CF_UNICODETEXT`. Ein Bild in der Zwischenablage ist danach weg.
+* **Tippmodus, Vorreden:** Beim Einfügen schneidet ChatNicer den Inhalt der
+  `<rewritten_text>`-Tags auch dann heraus, wenn das Modell noch „Hier ist mein
+  Versuch:" davorsetzt. Im Stream ist das nicht möglich, ohne den Anfang zu
+  puffern – also genau das aufzugeben, worum es in diesem Modus geht. Das
+  öffnende Tag wird deshalb nur am Textanfang erkannt; eine Vorrede davor würde
+  mitgetippt. Mit `qwen3:4b-instruct` ist der Fall in den Testläufen nicht
+  aufgetreten.
 * **Fenster mit Administratorrechten:** Dort nimmt Windows (UIPI) keine simulierten
   Tastendrücke an. Abhilfe: ChatNicer ebenfalls als Administrator starten.
 * **JSON-Leser:** bewusst ein Extraktor für String-Werte, kein vollständiger Parser.
@@ -255,7 +294,7 @@ bleibt also bedienbar.
 
 Auf Windows 11 (Build 26200), VS 2022, Ollama 0.21.2 gebaut und geprüft:
 
-* Release-Build fehlerfrei bei `/W4`, 100 KB (102.400 Bytes) – über `build.bat` und MSBuild
+* Release-Build fehlerfrei bei `/W4`, 107 KB (109.056 Bytes) – über `build.bat` und MSBuild
 * 43 automatisierte Tests, davon der Großteil live gegen das lokale Ollama:
   JSON-Erzeugung, XML-Extraktion inklusive aller real beobachteten kaputten
   Tag-Schreibweisen, Denkprozess-Filter, `config.ini`-Roundtrip mit Umlauten,
@@ -279,3 +318,19 @@ Auf Windows 11 (Build 26200), VS 2022, Ollama 0.21.2 gebaut und geprüft:
   löst den Zweitversuch nicht aus
 * `"think": false` gegen Ollama 0.21.2 nachgemessen: weiterhin defekt, der
   Denkprozess landet vollständig im `content`
+
+Zum Tippmodus zusätzlich geprüft:
+
+* 32 Tests für den Streaming-Teil, davon 12 gegen den inkrementellen Tag-Filter
+  mit **jeder** Häppchengröße von 1 bis 40 Zeichen – auch bei Aufteilung mitten
+  im Tag kommt derselbe Text heraus wie beim Einfügen (kein schließendes Tag,
+  `<rewritten_text` ohne `>`, nur schließendes Tag, gar kein Tag, Denkprozess im
+  `content`, mehrzeilig, Umlaute, einzelne `<` im Text, Nachgeplapper nach dem Tag)
+* live gegengeprüft: derselbe Rohstream einmal durch den Streaming-Filter und
+  einmal komplett durch `ExtractTagged` – Ergebnis zeichengleich
+* Kompletter Durchlauf gegen ein Testfenster: 271 Zeichen markiert, die Antwort
+  traf als 284 einzelne Tastatureingaben über **1,3 Sekunden** verteilt ein
+  (gemessen an den Zeitstempeln der `WM_CHAR`-Ereignisse), gleichmäßig über den
+  ganzen Zeitraum – Umlaute korrekt
+* Einfügemodus im selben Aufbau erneut geprüft: unverändert 5 Tastendrücke
+  (STRG+C, STRG+V), Antwort nach 750 ms ersetzt

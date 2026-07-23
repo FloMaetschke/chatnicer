@@ -5,15 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Projekt
 
 ChatNicer: Win32-Tray-Tool. Markierten Text per Hotkey kopieren, an ein lokales
-Ollama-Modell schicken, Antwort an der Cursorposition einfügen. Reines Win32 +
-WinHTTP, x64, keine externen Bibliotheken. Bedienung und Konfiguration stehen im
-[README.md](README.md).
+Ollama-Modell schicken, Antwort an der Cursorposition einfügen – wahlweise
+komplett per Zwischenablage oder live getippt, während das Modell streamt. Reines
+Win32 + WinHTTP, x64, keine externen Bibliotheken. Bedienung und Konfiguration
+stehen im [README.md](README.md).
 
 ## Build
 
 ```bat
-build.bat            :: Standard-Release -> build\ChatNicer.exe (102.400 B)
-build.bat compat     :: statische CRT inkl. Exceptions (194.048 B)
+build.bat            :: Standard-Release -> build\ChatNicer.exe (109.056 B)
+build.bat compat     :: statische CRT inkl. Exceptions (204.288 B)
 ```
 
 Alternativ MSBuild (liefert dieselbe EXE nach `build\Release\`):
@@ -34,7 +35,7 @@ Get-Process ChatNicer -ErrorAction SilentlyContinue | Stop-Process -Force
 
 ## Harte Randbedingungen
 
-**Größenbudget < 200 KB** (204.800 Bytes). Aktuell 102.400 Bytes – rund 100 KB
+**Größenbudget < 200 KB** (204.800 Bytes). Aktuell 109.056 Bytes – rund 93 KB
 Reserve. Erreicht wird das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`
 (vcruntime statisch, UCRT dynamisch – `ucrtbase.dll` gehört ab Windows 10 zum
 System, deshalb kein VC++-Redist), dazu `/O1 /Os`, `/GL`+`/LTCG`, `/GR-`, `/GS-`,
@@ -48,8 +49,16 @@ bleibt trotzdem das Ziel: eingebunden sind weiterhin nur `<string>` und
 `<vector>`. `<sstream>` oder `<iostream>` kosten je einige zehn KB und passen
 jetzt zwar hinein, `<regex>` allein frisst aber einen Großteil des neuen
 Spielraums – im Zweifel von Hand parsen, so wie es `network.h` schon tut.
-Auch `build.bat compat` (194.048 B, komplett statische CRT) liegt jetzt
-innerhalb des Budgets.
+
+**`build.bat compat` ist der enge Fall, nicht der Standard-Release:** 204.288 B
+bei 204.800 B Budget, also 512 Bytes Luft. Der Tippmodus hat diese Variante beim
+ersten Wurf auf 207.360 B getrieben; wieder unter das Budget gebracht haben es
+drei Änderungen, die auch für sich sinnvoll sind und deshalb nicht
+zurückgebaut werden sollten: `Chat()`/`ChatStream()` teilen sich `ChatCore()`,
+`TagStream::Feed`/`Flush` hängen an einen Ausgabeparameter an statt einen String
+zurückzugeben, und `TrimLeftIn`/`TrimRightIn` ersetzen vier gleiche Schleifen.
+Wer hier etwas hinzufügt, misst **beide** Varianten – der Standard-Release hat
+93 KB Reserve und merkt nichts davon.
 
 **`/utf-8` ist Pflicht** (in `build.bat` und `vcxproj`): Der Standard-System-Prompt
 in `config.h` enthält echte Umlaute. Ohne das Flag werden sie falsch kodiert.
@@ -103,6 +112,21 @@ Message-Loop `IsDialogMessage(g_settings, …)` aufruft.
 5. Backup zurückschreiben. Bei **jedem** Fehlerpfad wird restauriert – die
    `finish`-Lambda kapselt das, deshalb überall `return finish(...)` verwenden.
 
+Ist `Config::typingInput` gesetzt, ersetzt ein eigener Zweig die Schritte 4 und 5:
+`net::ChatStream()` liefert den Text häppchenweise, `TypeText()` schickt ihn
+sofort als Tastatureingabe. Schritte 1–3 bleiben identisch – die Markierung wird
+hier vom **ersten getippten Zeichen** ersetzt statt vom Einfügen. Der Preis ist,
+dass ab dem ersten Zeichen nichts mehr zurückgenommen werden kann: bricht die
+Verbindung mitten in der Antwort ab, bleibt der halbe Text stehen, und die
+Meldung sagt das auch. Die Zwischenablage bekommt im Tippmodus nie die Antwort
+zu sehen, nur den kopierten Originaltext.
+
+`TypeText()` sendet Zeichen mit `KEYEVENTF_UNICODE` (layoutunabhängig, Umlaute
+und Emojis inklusive; Surrogatpaare gehen als zwei aufeinanderfolgende Events
+automatisch durch), Zeilenumbrüche dagegen als echtes `VK_RETURN` – ein
+Unicode-0x0A ignorieren die meisten Zielprogramme. In einem Chat-Eingabefeld
+schickt ENTER die Nachricht ab; das steht deshalb als Hinweis an der Checkbox.
+
 ## Ollama-Anbindung (`network.h`)
 
 `POST /api/chat` mit `"stream": false`. Zwei Details, die je einen Testlauf
@@ -141,6 +165,33 @@ gekostet haben:
   aber ohne Denkphase (Qwen3-4B-Instruct-2507): 1–4 s statt 14–27 s. Ein
   `qwen3:14b-instruct` gibt es in der Ollama-Library nicht, nur `4b` und `30b`.
 
+### Streaming (`ChatStream`, nur im Tippmodus)
+
+Dieselbe Anfrage mit `"stream": true`. Ollama antwortet dann mit NDJSON – eine
+Zeile pro Token-Häppchen. `Request()` sammelt den Body in diesem Fall nicht,
+sondern reicht jede vollständige Zeile an einen `LineSink` weiter; `r.body`
+enthält danach nur noch die letzte Zeile (die mit `"done":true`), aus der
+`HitTokenLimit()` liest. Drei Punkte, die nicht verhandelbar sind:
+
+- **Zerlegt wird an `\n`, nicht an Puffergrenzen.** Ein WinHTTP-Häppchen darf
+  mitten in einem UTF-8-Zeichen enden; Zeilenenden sind ASCII, eine vollständige
+  Zeile ist deshalb immer gültiges UTF-8. `FromUtf8()` erst pro Zeile aufrufen.
+- **Bei HTTP >= 400 wird nicht gestreamt**, sondern der Body ganz gelesen – sonst
+  ginge die Fehlermeldung aus `{"error":"..."}` verloren.
+- **`TagStream` ersetzt `ExtractTagged()` für den Stream.** Getippter Text ist
+  endgültig, also hält der Filter genau so viel zurück, wie noch Teil eines Tags
+  werden könnte: am Anfang bis klar ist, ob `<rewritten_text>` (oder `<think>`)
+  beginnt; am Ende jedes Häppchens ein mögliches Präfix von `</rewritten_text`
+  und abschließender Leerraum. Ein Modell ohne Tags läuft ohne Verzögerung durch.
+  Absichtlicher Unterschied zu `ExtractTagged()`: das öffnende Tag wird nur am
+  Textanfang erkannt, nicht hinter einer Vorrede – im Stream ließe sich das nur
+  durch Puffern kaufen, und genau das soll der Modus ja vermeiden.
+
+`ChatStream()` und `Chat()` teilen sich `ChatCore()`, damit der Zweitversuch für
+denkende Modelle nur an einer Stelle steht. Im Stream ist seine Bedingung sogar
+schärfer: kam noch kein Zeichen beim Aufrufer an, wurde auch nichts getippt, das
+Nachfragen ist also gefahrlos.
+
 Der JSON-Leser ist ein String-Extraktor, kein Parser. `JsonFindStringFrom()`
 überspringt escapte Anführungszeichen korrekt; `ExtractChatAnswer()` sucht
 gezielt ab `"message"`, damit ein vorangehendes `thinking`-Feld nicht stört.
@@ -178,6 +229,18 @@ Beim Testen des Gesamtablaufs: STRG+C/STRG+V gehen an das **Vordergrundfenster**
 ein Testzielfenster muss sich den Fokus beim Start selbst holen und den Ablauf
 selbst anstoßen (`PostMessage(hwnd, WM_HOTKEY, 1, 0)` an `ChatNicerHiddenWnd`),
 sonst landen die Tastendrücke in fremden Fenstern. Ohne Fokus lieber abbrechen.
+
+**Vordergrund ist nicht gleich Eingabefokus.** `SetForegroundWindow` (auch mit
+`AttachThreadInput` erzwungen) macht das Fenster zum Vordergrundfenster, gibt dem
+Eingabefeld darin aber nicht zuverlässig den Tastaturfokus. SendInput läuft dann
+ins Leere und ChatNicer meldet „Kein Text markiert" – ein Fehlerbild, das leicht
+für einen echten Regress gehalten wird. Ein simulierter **Mausklick** ins Feld
+(`SetCursorPos` + `mouse_event`) vor `SelectAll()` behebt es zuverlässig.
+
+Der Tippmodus lässt sich mit einem Timer **nicht** beobachten: `WM_TIMER` hat die
+niedrigste Priorität und wird erst zugestellt, wenn die Tastatur-Queue leer ist –
+ein Snapshot-Timer sieht deshalb nur „vorher" und „fertig". Messbar wird der
+Verlauf über die Zeitstempel der einzelnen `KeyPress`/`WM_CHAR`-Ereignisse.
 
 Fallstrick bei PowerShell-Testskripten: `$null` wird an `string`-Parameter von
 P/Invoke als `""` gebunden, `FindWindowW(cls, $null)` sucht dann ein Fenster mit

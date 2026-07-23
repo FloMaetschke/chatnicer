@@ -3,6 +3,8 @@
 //
 //  Markierten Text per Hotkey (Standard: STRG+SHIFT+SPACE) kopieren, an ein lokales
 //  Ollama-Modell schicken und die Antwort an der Cursorposition wieder einfuegen.
+//  Wahlweise wird die Antwort stattdessen live getippt, waehrend das Modell sie
+//  schreibt (Einstellung "Antwort live tippen", siehe TypeText/net::ChatStream).
 //
 //  Konfiguriert werden nur Ollama-URL (Standard http://localhost:11434) und der
 //  Modellname in Ollama-Schreibweise (Standard qwen3:4b-instruct).
@@ -12,7 +14,7 @@
 // -------------------------------------------------------------------------------------
 //  BUILD (x64 Native Tools Command Prompt for VS 2022) - oder einfach: build.bat
 //
-//  Release, 102.400 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
+//  Release, 109.056 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
 //
 //    cl /nologo /std:c++17 /permissive- /W4 /MT /utf-8 /EHs-c- /D_HAS_EXCEPTIONS=0 ^
 //       /O1 /Os /Oi /Oy /Gy /Gw /GL /GR- /GS- /Zc:inline /Zc:threadSafeInit- ^
@@ -38,9 +40,9 @@
 //                         Windows 10 zum Betriebssystem -> KEIN VC++-Redist erforderlich.
 //
 //  Groessenvergleich derselben Quelle (gemessen):
-//    komplett statische CRT, mit Exceptions (/MT /EHsc) ... 194.048 B - maximal robust
-//    obige Release-Konfiguration .......................... 102.400 B - Standard
-//    dynamische CRT (/MD) .................................  87.552 B - braucht VC++-Redist
+//    komplett statische CRT, mit Exceptions (/MT /EHsc) ... 204.288 B - maximal robust
+//    obige Release-Konfiguration .......................... 109.056 B - Standard
+//    dynamische CRT (/MD) .................................  97.280 B - braucht VC++-Redist
 //
 //  Hinweis zu _HAS_EXCEPTIONS=0: bei Speichermangel bricht die STL hart ab, statt
 //  std::bad_alloc zu werfen. Fuer ein Tool dieser Groesse akzeptabel - wer das nicht
@@ -102,7 +104,7 @@ static const wchar_t* kMutexName  = L"Local\\ChatNicer_SingleInstance";
 
 enum { IDM_SETTINGS = 40001, IDM_ABOUT, IDM_EXIT };
 enum { IDC_URL = 1001, IDC_MODEL, IDC_PROMPT, IDC_KEY, IDC_HOTKEY,
-       IDC_RESTORE, IDC_TEST, IDC_SAVE, IDC_CANCEL };
+       IDC_TYPING, IDC_RESTORE, IDC_TEST, IDC_SAVE, IDC_CANCEL };
 enum { HOTKEY_ID = 1 };
 
 enum TrayState { STATE_IDLE = 0, STATE_BUSY = 1, STATE_ERROR = 2 };
@@ -309,6 +311,48 @@ static bool SendCtrlCombo(WORD key) {
     return SendInput(4, in, sizeof(INPUT)) == 4;
 }
 
+// Text als Tastatureingabe schicken (Tippmodus).
+//
+// Zeichen gehen als KEYEVENTF_UNICODE raus - damit sind Umlaute und Emojis
+// unabhaengig vom Tastaturlayout des Zielfensters richtig. Surrogatpaare
+// erledigen sich von selbst, weil beide Haelften nacheinander gesendet werden.
+// Zeilenumbrueche dagegen als echtes ENTER: ein Unicode-0x0A ignorieren die
+// meisten Zielprogramme. In einem Chat-Eingabefeld schickt ENTER die Nachricht
+// ab - deshalb steht der Hinweis auch an der Checkbox im Dialog.
+static bool TypeText(const std::wstring& text) {
+    INPUT batch[64];
+    UINT  n  = 0;
+    bool  ok = true;
+
+    for (size_t i = 0; i <= text.size(); ++i) {
+        // Batch voll oder Text zu Ende -> abschicken
+        if (n > ARRAYSIZE(batch) - 2 || i == text.size()) {
+            if (n && SendInput(n, batch, sizeof(INPUT)) != n) ok = false;
+            n = 0;
+            if (i == text.size()) break;
+        }
+
+        const wchar_t c = text[i];
+        if (c == L'\r') continue;                 // ToCrLf-Paare nicht doppelt tippen
+
+        INPUT down = {};
+        down.type = INPUT_KEYBOARD;
+        if (c == L'\n') {
+            down.ki.wVk   = VK_RETURN;
+            down.ki.wScan = static_cast<WORD>(MapVirtualKeyW(VK_RETURN, MAPVK_VK_TO_VSC));
+        } else {
+            down.ki.wScan   = static_cast<WORD>(c);
+            down.ki.dwFlags = KEYEVENTF_UNICODE;
+        }
+        INPUT up = down;
+        up.ki.dwFlags |= KEYEVENTF_KEYUP;
+
+        batch[n++] = down;
+        batch[n++] = up;
+    }
+    return ok;
+}
+
 // Der Nutzer haelt beim Ausloesen des Hotkeys noch STRG+SHIFT gedrueckt. Wuerde man
 // sofort STRG+C senden, kaeme beim Zielprogramm STRG+SHIFT+C an.
 static void WaitForModifiersReleased(DWORD maxMs) {
@@ -359,6 +403,12 @@ static void PostDone(bool ok, const std::wstring& msg) {
                  reinterpret_cast<LPARAM>(new std::wstring(msg)));
 }
 
+// Ziel fuer net::ChatStream: jedes Haeppchen sofort tippen. "user" zeigt auf ein
+// bool, das beim ersten blockierten SendInput auf false faellt.
+static void TypeSink(const std::wstring& text, void* user) {
+    if (!TypeText(text)) *static_cast<bool*>(user) = false;
+}
+
 // =====================================================================================
 //  Arbeitsablauf (eigener Thread, damit der Hotkey/das UI nie blockiert)
 //    Kopieren -> POST -> Antwort -> Einfuegen -> Zwischenablage wiederherstellen
@@ -399,7 +449,36 @@ static DWORD WINAPI WorkerProc(LPVOID param) {
     if (!ClipGetText(userText) || net::Trim(userText).empty())
         return finish(false, L"Kein Text markiert (oder die Zwischenablage ist blockiert).");
 
-    // --- 2) Ollama fragen -------------------------------------------------------------
+    // --- 2a) Tippmodus: streamen und dabei schon schreiben ---------------------------
+    //
+    // Der erste Tastendruck ersetzt die noch bestehende Markierung, genau wie es
+    // sonst das Einfuegen tut. Ein Fehler mitten im Stream laesst sich hier aber
+    // nicht mehr zuruecknehmen - dann steht bereits Text im Zielfenster.
+    if (c->typingInput) {
+        bool   typeOk = true;
+        size_t chars  = 0;
+        net::Result sres = net::ChatStream(c->ollamaUrl, c->apiKey, c->model, c->systemPrompt,
+                                           ToLf(userText), c->temperature, c->timeoutMs,
+                                           TypeSink, &typeOk, &chars);
+
+        needRestore = c->restoreClipboard && haveBackup;   // die Antwort war nie im Clipboard
+
+        if (!sres.ok) {
+            if (chars == 0) return finish(false, sres.error);
+            return finish(false, L"Abgebrochen, getippter Text bleibt stehen: " + sres.error);
+        }
+        if (!typeOk)
+            return finish(false, L"Tastatureingabe blockiert. Laeuft das Zielfenster mit "
+                                 L"Administratorrechten? Dann ChatNicer ebenfalls als Admin starten.");
+        if (chars == 0)
+            return finish(false, L"Das Modell hat eine leere Antwort geliefert.");
+
+        wchar_t typed[96];
+        wsprintfW(typed, L"Fertig (%u Zeichen getippt).", static_cast<unsigned>(chars));
+        return finish(true, typed);
+    }
+
+    // --- 2b) Ollama fragen ------------------------------------------------------------
     net::Result res = net::Chat(c->ollamaUrl, c->apiKey, c->model, c->systemPrompt,
                                 ToLf(userText), c->temperature, c->timeoutMs);
     if (!res.ok)
@@ -573,12 +652,21 @@ static void BuildSettingsControls(HWND hwnd) {
         }
     }
 
+    CreateWindowExW(0, L"BUTTON", L"Antwort live tippen statt einfuegen (Streaming)",
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                    S(LX), S(376), S(EW), S(20), hwnd,
+                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_TYPING)), g_inst, nullptr);
+    CreateWindowExW(0, L"STATIC",
+                    L"Antwort erscheint Token fuer Token. Zeilenumbrueche als ENTER.",
+                    WS_CHILD | WS_VISIBLE | SS_LEFT,
+                    S(LX + 18), S(396), S(EW - 18), S(16), hwnd, nullptr, g_inst, nullptr);
+
     CreateWindowExW(0, L"BUTTON", L"Zwischenablage nach dem Einfuegen wiederherstellen",
                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                    S(LX), S(378), S(EW), S(20), hwnd,
+                    S(LX), S(418), S(EW), S(20), hwnd,
                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RESTORE)), g_inst, nullptr);
 
-    const int BY = 414, BW = 110, BH = 28;
+    const int BY = 454, BW = 110, BH = 28;
     CreateWindowExW(0, L"BUTTON", L"Verbindung testen",
                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
                     S(LX), S(BY), S(130), S(BH), hwnd,
@@ -605,6 +693,7 @@ static void BuildSettingsControls(HWND hwnd) {
     SetWindowTextW(GetDlgItem(hwnd, IDC_HOTKEY),
                    cfg::HotkeyToString(g_cfg.hotkeyMods, g_cfg.hotkeyVk).c_str());
     CheckDlgButton(hwnd, IDC_RESTORE, g_cfg.restoreClipboard ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(hwnd, IDC_TYPING,  g_cfg.typingInput      ? BST_CHECKED : BST_UNCHECKED);
 
     // installierte Modelle nebenher holen - blockiert den Dialog nicht
     RequestModelList(g_cfg.ollamaUrl, g_cfg.apiKey);
@@ -629,6 +718,7 @@ static bool ApplySettings(HWND hwnd) {
     next.apiKey      = net::Trim(GetText(GetDlgItem(hwnd, IDC_KEY)));
     next.systemPrompt= ToLf(GetText(GetDlgItem(hwnd, IDC_PROMPT)));
     next.restoreClipboard = IsDlgButtonChecked(hwnd, IDC_RESTORE) == BST_CHECKED;
+    next.typingInput      = IsDlgButtonChecked(hwnd, IDC_TYPING)  == BST_CHECKED;
 
     if (next.ollamaUrl.empty()) next.ollamaUrl = cfg::kDefaultUrl;
 

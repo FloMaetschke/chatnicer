@@ -80,6 +80,10 @@ struct Config {
     UINT         hotkeyMods = MOD_CONTROL | MOD_SHIFT;
     UINT         hotkeyVk   = VK_SPACE;
     bool         restoreClipboard = true;    // alten Clipboard-Inhalt zurueckschreiben
+    // Tippmodus: Antwort per "stream":true holen und Zeichen fuer Zeichen als
+    // Tastatureingabe schicken, statt sie fertig ueber die Zwischenablage
+    // einzufuegen. Sichtbar wie im Ollama-Chat, dafuer nicht zurueckzunehmen.
+    bool         typingInput = false;
     DWORD        timeoutMs  = 120000;        // lokale Modelle brauchen oft 10-30 s
 };
 
@@ -307,6 +311,7 @@ inline void Load(Config& c) {
     if (ParseHotkey(hk, m, v)) { c.hotkeyMods = m; c.hotkeyVk = v; }
 
     c.restoreClipboard = GetPrivateProfileIntW(L"ChatNicer", L"RestoreClipboard", 1, f.c_str()) != 0;
+    c.typingInput      = GetPrivateProfileIntW(L"ChatNicer", L"TypingInput",      0, f.c_str()) != 0;
 
     DWORD t = GetPrivateProfileIntW(L"ChatNicer", L"TimeoutMs", 120000, f.c_str());
     c.timeoutMs = (t < 1000) ? 1000 : (t > 600000 ? 600000 : t);
@@ -328,6 +333,7 @@ inline bool Save(const Config& c) {
     ok &= put(L"Temperature",  c.temperature);
     ok &= put(L"Hotkey",       HotkeyToString(c.hotkeyMods, c.hotkeyVk));
     ok &= put(L"RestoreClipboard", c.restoreClipboard ? L"1" : L"0");
+    ok &= put(L"TypingInput",      c.typingInput      ? L"1" : L"0");
 
     wchar_t num[16];
     wsprintfW(num, L"%u", c.timeoutMs);

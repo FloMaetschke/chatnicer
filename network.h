@@ -13,6 +13,13 @@
 //  Antwort:
 //    {"model":"...","message":{"role":"assistant","thinking":"...","content":"..."},...}
 //
+//  Fuer den Tippmodus (Config::typingInput) laeuft dieselbe Anfrage mit
+//  "stream": true. Ollama liefert dann NDJSON - eine JSON-Zeile pro Token-Haeppchen,
+//  jede mit einem Teilstueck in message.content und die letzte mit "done":true.
+//  ChatStream() reicht diese Teilstuecke einzeln nach oben durch; TagStream
+//  schneidet dabei die <rewritten_text>-Klammer heraus, ohne den ganzen Text zu
+//  kennen (siehe dort).
+//
 //  Wichtig bei denkenden Modellen (qwen3, deepseek-r1, ...): Ollama liefert den
 //  Denkprozess im separaten Feld "thinking" und die eigentliche Antwort in
 //  "content" - hier wird ausschliesslich "content" eingefuegt. Der Parameter
@@ -154,10 +161,11 @@ inline std::wstring BuildChatPayload(const std::wstring& model,
                                      const std::wstring& systemPrompt,
                                      const std::wstring& userText,
                                      const std::wstring& temperature,
-                                     bool capLength = true) {
+                                     bool capLength = true,
+                                     bool stream    = false) {
     std::wstring j = L"{\"model\":\"";
     j += JsonEscape(model);
-    j += L"\",\"stream\":false,\"options\":";
+    j += stream ? L"\",\"stream\":true,\"options\":" : L"\",\"stream\":false,\"options\":";
     j += BuildOptions(systemPrompt.size(), userText.size(), temperature, capLength);
     j += L",\"messages\":[";
     if (!Trim(systemPrompt).empty()) {
@@ -314,6 +322,161 @@ inline std::wstring ExtractChatAnswer(const std::wstring& body) {
     return std::wstring();
 }
 
+// -------------------------------------------------------------------------------------
+// Streaming: dieselbe Klammer inkrementell aufschneiden
+//
+// ExtractTagged() sieht den fertigen Text und kann darin suchen. Beim Streaming
+// kommt der Text haeppchenweise, und was einmal getippt wurde, laesst sich nicht
+// zuruecknehmen. TagStream haelt deshalb genau so viel zurueck, wie noch Teil
+// eines Tags werden koennte:
+//
+//   - am Anfang, bis klar ist, ob ein <rewritten_text> (oder <think>) beginnt,
+//   - am Ende jedes Haeppchens ein moegliches Praefix von "</rewritten_text",
+//   - abschliessende Leerzeichen (sonst bliebe der Umbruch vor dem Tag stehen).
+//
+// Ein Modell, das gar kein Tag schreibt, laeuft dadurch ohne Verzoegerung durch.
+// -------------------------------------------------------------------------------------
+inline bool IsWsChar(wchar_t c) {
+    return c == L' ' || c == L'\r' || c == L'\n' || c == L'\t';
+}
+
+inline void TrimLeftIn(std::wstring& s) {
+    size_t a = 0;
+    while (a < s.size() && IsWsChar(s[a])) ++a;
+    if (a) s.erase(0, a);
+}
+
+inline void TrimRightIn(std::wstring& s) {
+    size_t b = s.size();
+    while (b > 0 && IsWsChar(s[b - 1])) --b;
+    if (b < s.size()) s.resize(b);
+}
+
+// Ist s (noch) ein echtes Praefix von t? Dann muss weiter gewartet werden.
+inline bool CouldBecome(const std::wstring& s, const wchar_t* t) {
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (t[i] == L'\0' || s[i] != t[i]) return false;
+    }
+    return true;
+}
+
+// Laenge des laengsten Suffixes von s, das ein echtes Praefix von t ist.
+inline size_t TailPrefixLen(const std::wstring& s, const wchar_t* t) {
+    size_t tlen = 0;
+    while (t[tlen]) ++tlen;
+    size_t n = (s.size() < tlen - 1) ? s.size() : tlen - 1;
+    for (; n > 0; --n) {
+        bool same = true;
+        for (size_t i = 0; i < n; ++i) {
+            if (s[s.size() - n + i] != t[i]) { same = false; break; }
+        }
+        if (same) return n;
+    }
+    return 0;
+}
+
+struct TagStream {
+    std::wstring pending;          // zurueckgehalten, weil noch Tag werden koennte
+    bool started = false;          // Oeffnungs-Tag abgehandelt
+    bool emitted = false;          // schon sichtbarer Text herausgegeben
+    bool done    = false;          // schliessendes Tag gesehen -> Rest verwerfen
+    bool inThink = false;
+
+    void Reset() { pending.clear(); started = emitted = done = inThink = false; }
+
+    // Haengt den freigegebenen Text an "out" an (Ausgabeparameter statt Rueckgabe:
+    // spart im Build ohne Exceptions wie im compat-Build spuerbar Code).
+    void Feed(const std::wstring& delta, std::wstring& out) {
+        if (done) return;
+        pending += delta;
+
+        for (;;) {
+            // Denkprozess im content (siehe StripThinking) - verwerfen bis </think>
+            if (inThink) {
+                const size_t end = pending.find(L"</think>");
+                if (end == std::wstring::npos) {
+                    const size_t keep = TailPrefixLen(pending, L"</think>");
+                    pending.erase(0, pending.size() - keep);
+                    return;
+                }
+                pending.erase(0, end + 8);
+                inThink = false;
+                continue;                       // danach kann das Oeffnungs-Tag folgen
+            }
+
+            if (!started) {
+                TrimLeftIn(pending);
+                if (pending.empty()) return;
+                if (pending[0] == L'<') {
+                    if (pending.compare(0, 7, L"<think>") == 0) {
+                        pending.erase(0, 7);
+                        inThink = true;
+                        continue;
+                    }
+                    if (CouldBecome(pending, L"<think>"))         return;   // warten
+                    if (CouldBecome(pending, L"<rewritten_text")) return;   // warten
+                    if (pending.compare(0, 15, L"<rewritten_text") == 0) {
+                        size_t p = 15;
+                        if (p >= pending.size()) return;          // folgt noch ein '>'?
+                        if (pending[p] == L'>') ++p;
+                        pending.erase(0, p);
+                    }
+                }
+                started = true;
+            }
+
+            // Vor dem ersten sichtbaren Zeichen fuehrende Umbrueche schlucken
+            if (!emitted) {
+                TrimLeftIn(pending);
+                if (pending.empty()) return;
+            }
+
+            // Bis zum schliessenden Tag bzw. bis zu dem, was noch eines werden kann.
+            // Ein abschliessender Umbruch bleibt liegen, sonst stuende er vor dem Tag.
+            const size_t close = pending.find(L"</rewritten_text");
+            size_t cut = (close != std::wstring::npos)
+                       ? close
+                       : pending.size() - TailPrefixLen(pending, L"</rewritten_text");
+            while (cut > 0 && IsWsChar(pending[cut - 1])) --cut;
+
+            if (cut > 0) {
+                emitted = true;
+                out.append(pending, 0, cut);
+            }
+            if (close != std::wstring::npos) { pending.clear(); done = true; }
+            else                               pending.erase(0, cut);
+            return;
+        }
+    }
+
+    // Stream zu Ende: was noch zurueckgehalten wird, war doch kein Tag - es sei
+    // denn, es ist ein angefangenes. Haengt wie Feed() an "out" an.
+    void Flush(std::wstring& out) {
+        const bool wasDone = done;
+        done = true;
+
+        const bool tagFragment =
+            (!started && (CouldBecome(pending, L"<rewritten_text") ||
+                          CouldBecome(pending, L"<think>"))) ||
+            ( started &&  CouldBecome(pending, L"</rewritten_text"));
+        if (wasDone || tagFragment || inThink) { pending.clear(); return; }
+
+        TrimLeftIn(pending);
+        TrimRightIn(pending);
+        if (!pending.empty()) { emitted = true; out += pending; }
+        pending.clear();
+    }
+};
+
+// Ein Teilstueck aus einer NDJSON-Zeile des Streams (message.content).
+// Rueckgabe false heisst nur "kein Text in dieser Zeile" - die letzte Zeile
+// (mit "done":true) enthaelt regulaer einen leeren content.
+inline bool ExtractStreamDelta(const std::wstring& line, std::wstring& out) {
+    const size_t msg = line.find(L"\"message\"");
+    if (msg == std::wstring::npos) return false;
+    return JsonFindStringFrom(line, L"content", msg, out) && !out.empty();
+}
+
 // Ollama meldet mit "done_reason":"length", dass num_predict aufgebraucht wurde.
 inline bool HitTokenLimit(const std::wstring& body) {
     std::wstring reason;
@@ -392,12 +555,39 @@ struct Handle {
     operator HINTERNET() const { return h; }
 };
 
+// Wird beim Streaming fuer jede vollstaendige NDJSON-Zeile aufgerufen.
+// Bewusst ein roher Funktionszeiger + void*: <functional> kostet mehrere zehn KB.
+typedef void (*LineSink)(const std::wstring& jsonLine, void* user);
+
+// Zerlegt den Lesepuffer an '\n' und reicht jede vollstaendige Zeile weiter.
+// Zeilenenden sind ASCII, ein Haeppchen darf also mitten in einem UTF-8-Zeichen
+// enden - die Zeile selbst ist immer vollstaendig.
+inline void PumpLines(std::string& raw, std::wstring& lastLine, LineSink sink, void* user) {
+    for (;;) {
+        const size_t nl = raw.find('\n');
+        if (nl == std::string::npos) return;
+        std::string line = raw.substr(0, nl);
+        raw.erase(0, nl + 1);
+        while (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        lastLine = FromUtf8(line);
+        sink(lastLine, user);
+    }
+}
+
 // Ein HTTP-Request (POST mit JSON-Body oder GET, wenn utf8Body leer ist).
+//
+// Ist "sink" gesetzt und der Status < 400, wird der Body nicht gesammelt, sondern
+// zeilenweise durchgereicht; r.body enthaelt danach nur noch die letzte Zeile -
+// genau die mit "done":true, aus der HitTokenLimit() liest. Bei Status >= 400
+// bleibt es beim vollstaendigen Body, sonst ginge die Fehlermeldung verloren.
 inline Result Request(const std::wstring& url,
                       const wchar_t*      method,
                       const std::wstring& bearer,
                       const std::string&  utf8Body,
-                      DWORD               timeoutMs) {
+                      DWORD               timeoutMs,
+                      LineSink            sink = nullptr,
+                      void*               user = nullptr) {
     Result r;
 
     if (Trim(url).empty()) {
@@ -482,7 +672,11 @@ inline Result Request(const std::wstring& url,
                         WINHTTP_HEADER_NAME_BY_INDEX, &status, &len, WINHTTP_NO_HEADER_INDEX);
     r.status = status;
 
-    std::string raw;
+    const bool streaming = (sink != nullptr && status < 400);
+    std::string  raw;          // beim Streaming nur der Rest hinter der letzten Zeile
+    std::wstring lastLine;
+    bool bomChecked = false;
+
     for (;;) {
         DWORD avail = 0;
         if (!WinHttpQueryDataAvailable(request, &avail)) {
@@ -499,15 +693,31 @@ inline Result Request(const std::wstring& url,
         }
         raw.resize(old + read);
         if (read == 0) break;
-        if (raw.size() > 32u * 1024u * 1024u) break; // Schutz gegen Endlos-Streams
+
+        if (streaming) {
+            if (!bomChecked && raw.size() >= 3) {
+                if (static_cast<BYTE>(raw[0]) == 0xEF && static_cast<BYTE>(raw[1]) == 0xBB &&
+                    static_cast<BYTE>(raw[2]) == 0xBF) raw.erase(0, 3);
+                bomChecked = true;
+            }
+            PumpLines(raw, lastLine, sink, user);
+        } else if (raw.size() > 32u * 1024u * 1024u) {
+            break;                                   // Schutz gegen Endlos-Streams
+        }
     }
 
-    // BOM einer UTF-8-Antwort entfernen
-    if (raw.size() >= 3 && static_cast<BYTE>(raw[0]) == 0xEF &&
-        static_cast<BYTE>(raw[1]) == 0xBB && static_cast<BYTE>(raw[2]) == 0xBF) {
-        raw.erase(0, 3);
+    if (streaming) {
+        raw += '\n';                                 // letzte Zeile ohne Umbruch
+        PumpLines(raw, lastLine, sink, user);
+        r.body = lastLine;
+    } else {
+        // BOM einer UTF-8-Antwort entfernen
+        if (raw.size() >= 3 && static_cast<BYTE>(raw[0]) == 0xEF &&
+            static_cast<BYTE>(raw[1]) == 0xBB && static_cast<BYTE>(raw[2]) == 0xBF) {
+            raw.erase(0, 3);
+        }
+        r.body = FromUtf8(raw);
     }
-    r.body = FromUtf8(raw);
 
     if (status >= 400) {
         std::wstring detail;
@@ -523,31 +733,101 @@ inline Result Request(const std::wstring& url,
     return r;
 }
 
-// Fragt eine Antwort des Modells an.
-inline Result Chat(const std::wstring& baseUrl, const std::wstring& bearer,
-                   const std::wstring& model, const std::wstring& systemPrompt,
-                   const std::wstring& userText, const std::wstring& temperature,
-                   DWORD timeoutMs) {
+// -------------------------------------------------------------------------------------
+// Anfrage ans Modell - einmal als Ganzes (Chat) und einmal als Stream (ChatStream).
+// Beide teilen sich ChatCore, damit vor allem der Zweitversuch nur an einer Stelle
+// steht: er ist fuer jedes denkende Modell ueberlebenswichtig.
+// -------------------------------------------------------------------------------------
+typedef void (*TextSink)(const std::wstring& text, void* user);
+
+struct StreamCtx {
+    TagStream filter;
+    TextSink  sink  = nullptr;
+    void*     user  = nullptr;
+    size_t    chars = 0;        // sichtbar herausgegebene Zeichen
+};
+
+inline void StreamOnLine(const std::wstring& line, void* user) {
+    StreamCtx* ctx = static_cast<StreamCtx*>(user);
+    std::wstring delta;
+    if (!ExtractStreamDelta(line, delta)) return;
+    std::wstring visible;
+    ctx->filter.Feed(delta, visible);
+    if (!visible.empty()) {
+        ctx->chars += visible.size();
+        ctx->sink(visible, ctx->user);
+    }
+}
+
+inline void StreamFlush(StreamCtx& ctx) {
+    std::wstring rest;
+    ctx.filter.Flush(rest);
+    if (!rest.empty()) {
+        ctx.chars += rest.size();
+        ctx.sink(rest, ctx.user);
+    }
+}
+
+// ctx == nullptr: eine Antwort am Stueck. Sonst: streamen und dabei durchreichen.
+inline Result ChatCore(const std::wstring& baseUrl, const std::wstring& bearer,
+                       const std::wstring& model, const std::wstring& systemPrompt,
+                       const std::wstring& userText, const std::wstring& temperature,
+                       DWORD timeoutMs, StreamCtx* ctx) {
     if (Trim(model).empty()) {
         Result r;
         r.error = L"Kein Modell konfiguriert (z. B. llama3.2:3b).";
         return r;
     }
+
+    const bool         stream   = (ctx != nullptr);
     const std::wstring endpoint = BuildEndpoint(baseUrl, L"/api/chat");
-    const std::wstring payload =
-        BuildChatPayload(Trim(model), systemPrompt, userText, temperature);
-    Result r = Request(endpoint, L"POST", bearer, ToUtf8(payload), timeoutMs);
+    const LineSink     sink     = stream ? StreamOnLine : nullptr;
+
+    std::wstring payload =
+        BuildChatPayload(Trim(model), systemPrompt, userText, temperature, true, stream);
+    Result r = Request(endpoint, L"POST", bearer, ToUtf8(payload), timeoutMs, sink, ctx);
+    if (stream && r.ok) StreamFlush(*ctx);
 
     // Denkende Modelle koennen das gesamte num_predict-Budget im Denkprozess
     // verbrauchen und gar keine Antwort mehr schreiben - "content" ist dann leer
     // und "done_reason" steht auf "length". Real beobachtet bei qwen3.5:4b, das
     // fuer diesen einen Satz ueber 1024 Token nachgedacht hat. In dem Fall genau
     // einmal ohne Deckel nachfragen: langsam, aber besser als nichts einzufuegen.
-    if (r.ok && HitTokenLimit(r.body) && ContentIsEmpty(r.body)) {
-        const std::wstring again =
-            BuildChatPayload(Trim(model), systemPrompt, userText, temperature, false);
-        r = Request(endpoint, L"POST", bearer, ToUtf8(again), timeoutMs);
+    // Im Stream ist die Bedingung sogar praeziser - ist nichts beim Aufrufer
+    // angekommen, wurde auch nichts getippt, das Nachfragen ist also gefahrlos.
+    const bool nothing = stream ? (ctx->chars == 0) : ContentIsEmpty(r.body);
+    if (r.ok && nothing && HitTokenLimit(r.body)) {
+        if (stream) ctx->filter.Reset();
+        payload = BuildChatPayload(Trim(model), systemPrompt, userText, temperature, false, stream);
+        r = Request(endpoint, L"POST", bearer, ToUtf8(payload), timeoutMs, sink, ctx);
+        if (stream && r.ok) StreamFlush(*ctx);
     }
+    return r;
+}
+
+// Fragt eine Antwort des Modells an.
+inline Result Chat(const std::wstring& baseUrl, const std::wstring& bearer,
+                   const std::wstring& model, const std::wstring& systemPrompt,
+                   const std::wstring& userText, const std::wstring& temperature,
+                   DWORD timeoutMs) {
+    return ChatCore(baseUrl, bearer, model, systemPrompt, userText, temperature,
+                    timeoutMs, nullptr);
+}
+
+// Dasselbe als Stream: der Aufrufer bekommt den Text haeppchenweise, waehrend das
+// Modell ihn schreibt (Tippmodus). Bereits herausgegebener Text ist endgueltig -
+// deshalb steckt die gesamte Aufraeumarbeit in TagStream statt in ExtractTagged.
+// charsOut meldet, wie viel Text tatsaechlich beim Aufrufer angekommen ist.
+inline Result ChatStream(const std::wstring& baseUrl, const std::wstring& bearer,
+                         const std::wstring& model, const std::wstring& systemPrompt,
+                         const std::wstring& userText, const std::wstring& temperature,
+                         DWORD timeoutMs, TextSink sink, void* user, size_t* charsOut) {
+    StreamCtx ctx;
+    ctx.sink = sink;
+    ctx.user = user;
+    Result r = ChatCore(baseUrl, bearer, model, systemPrompt, userText, temperature,
+                        timeoutMs, &ctx);
+    if (charsOut) *charsOut = ctx.chars;
     return r;
 }
 
