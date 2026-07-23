@@ -1,0 +1,31 @@
+# Build-Ausgaben (build.bat und MSBuild schreiben beide nach build\)
+build/
+
+# Visual Studio / MSBuild
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+*.aps
+
+# Compiler- und Linker-Artefakte
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.iobj
+*.ipdb
+*.exp
+*.lib
+*.idb
+*.tlog
+*.log
+*.recipe
+
+# Laufzeit-Konfiguration (wird neben der EXE bzw. in %APPDATA% angelegt)
+config.ini
+
+# Ad-hoc-Testtreiber (siehe CLAUDE.md, Abschnitt "Testen")
+selftest.cpp
+selftest.exe
