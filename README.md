@@ -1,6 +1,6 @@
 # ChatNicer
 
-Ein sehr leichtgewichtiges Windows-Tray-Programm (**97 KB**, reines Win32 + WinHTTP):
+Ein sehr leichtgewichtiges Windows-Tray-Programm (**99 KB**, reines Win32 + WinHTTP):
 markierten Text per Hotkey an ein lokales **Ollama**-Modell schicken und die Antwort
 direkt an der Cursorposition wieder einfügen.
 
@@ -17,7 +17,7 @@ VC++-Redistributable. Der Text verlässt den Rechner nicht.
    Markierung durch die umformulierte Fassung
 4. Die vorherige Zwischenablage wird anschließend wiederhergestellt
 
-Mit `llama3.2:3b` dauert das rund **eine Sekunde**.
+Mit einem 3B/4B-Modell dauert das rund **eine Sekunde**.
 
 Das Tray-Icon zeigt den Zustand: **blau** = bereit, **orange** = Modell arbeitet,
 **rot** = Fehler (mit Benachrichtigung im Klartext).
@@ -29,11 +29,12 @@ Das Tray-Icon zeigt den Zustand: **blau** = bereit, **orange** = Modell arbeitet
 Ollama läuft lokal, und das gewünschte Modell ist installiert:
 
 ```
-ollama pull llama3.2:3b
+ollama pull qwen3:4b-instruct
 ```
 
-Mehr ist nicht nötig – die Standardwerte (`http://localhost:11434`, `llama3.2:3b`)
-passen auf eine unveränderte Ollama-Installation.
+Mehr ist nicht nötig – die Standardwerte (`http://localhost:11434`,
+`qwen3:4b-instruct`) passen auf eine unveränderte Ollama-Installation.
+Zur Modellwahl siehe unten; wichtig ist die Endung `-instruct`.
 
 ---
 
@@ -58,18 +59,19 @@ Die Icons werden zur Laufzeit gezeichnet, deshalb gibt es **keine `.rc`-Datei**.
 **Ohne IDE:**
 
 ```bat
-build.bat            :: Standard, 97 KB  -> build\ChatNicer.exe
+build.bat            :: Standard, 99 KB  -> build\ChatNicer.exe
 build.bat compat     :: komplett statische CRT inkl. Exceptions (190 KB)
 ```
 
 ### Warum die EXE so klein ist
 
+Das Größenbudget liegt bei **200 KB**; beide Bauvarianten bleiben darunter.
 Gemessen mit VS 2022 / Windows SDK 10.0.26100:
 
 | Variante | Größe | Laufzeitabhängigkeit |
 |---|---:|---|
 | statische CRT + Exceptions (`build.bat compat`) | 194.048 B | keine |
-| **Standard-Release** | **99.328 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
+| **Standard-Release** | **101.376 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
 | dynamische CRT (`/MD`) | 87.552 B | VC++-Redistributable erforderlich |
 
 Der entscheidende Trick ist `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`: die vcruntime
@@ -97,7 +99,7 @@ schreibgeschützten Ordner (z. B. `C:\Program Files`), weicht es automatisch auf
 ```ini
 [ChatNicer]
 OllamaUrl=http://localhost:11434
-Model=llama3.2:3b
+Model=qwen3:4b-instruct
 ApiKey=                        ; nur für abgesichertes Remote-Ollama
 SystemPrompt=...               ; siehe unten
 Temperature=0.2                ; niedrig = weniger Abschweifen
@@ -160,8 +162,22 @@ Wer den Prompt anpasst (z. B. zum Übersetzen), sollte die Regel zu den
 
 | Modell | Dauer pro Anfrage | Bewertung |
 |---|---|---|
-| **llama3.2:3b** | ~0,3–1 s | Empfehlung: schnell genug fürs Tippen im Fluss |
-| qwen3:4b | 14–27 s | denkt sichtbar mit; für Inline-Einfügen zu langsam |
+| **qwen3:4b-instruct** | ~0,3 s | Standard: hält sich am zuverlässigsten an die Tag-Regel, bestes Deutsch |
+| llama3.2:3b | ~0,3–1 s | ähnlich schnell, verhaspelt sich aber häufiger beim Tag |
+| qwen3:4b | 14–27 s | dieselbe Größe, denkt aber sichtbar mit – für Inline-Einfügen zu langsam |
+| qwen3.5:4b | ~16 s | denkt noch ausdauernder; löst regelmäßig den Zweitversuch aus (siehe unten) |
+
+Die erste Anfrage nach einer Pause dauert rund **7 Sekunden**, weil Ollama das
+Modell erst in den Speicher lädt. Danach bleibt es standardmäßig 5 Minuten
+geladen; wer den Kaltstart ganz vermeiden will, setzt `OLLAMA_KEEP_ALIVE=-1`.
+
+**Die Endung ist entscheidend, nicht die Größe.** `qwen3:4b` und
+`qwen3:4b-instruct` sind gleich groß; die Instruct-Variante
+(Qwen3-4B-Instruct-2507) hat die Denkphase gar nicht erst. Wer stattdessen
+`qwen3:4b` oder ein `gemma`-Modell nimmt, wartet nicht wegen der Parameterzahl,
+sondern weil das Modell vor jeder Antwort erst nachdenkt. In der qwen3-Reihe gibt
+es die Instruct-Variante nur als `4b` und `30b` – ein `qwen3:14b-instruct`
+existiert nicht.
 
 Zu qwen3 und anderen denkenden Modellen: Ollama liefert den Denkprozess im
 separaten Feld `thinking`, ChatNicer verwendet nur `content` – der eingefügte Text
@@ -169,6 +185,31 @@ ist also sauber. Der Parameter `"think": false` wird bewusst **nicht** gesendet:
 qwen3 hört damit nicht auf zu denken, Ollama trennt die Felder dann aber nicht mehr
 und der komplette Denkprozess landet im Antworttext. Als zusätzliche Absicherung
 entfernt ChatNicer alles bis zum letzten `</think>`.
+
+---
+
+## Request-Optionen
+
+Neben `Temperature` schickt ChatNicer zwei berechnete Grenzen mit, die sich nach
+der Länge des markierten Textes richten. Beide sind absichtlich nicht
+konfigurierbar – sie haben genau einen sinnvollen Wert pro Anfrage.
+
+| Option | Wert | Zweck |
+|---|---|---|
+| `num_predict` | 256–4096 Token, nach Textlänge | Bremst Modelle, die nach dem schließenden Tag weiterschreiben. `ExtractTagged` würde das Nachgeplapper zwar verwerfen, aber die Anfrage dauert dann ein Vielfaches. |
+| `num_ctx` | 8192–32768, **nur bei Bedarf** | Ollamas Standardfenster ist klein; längerer markierter Text würde sonst stillschweigend abgeschnitten. |
+| `repeat_penalty` | `1.05` | Unter Ollamas Standard `1.1`, denn beim Umschreiben müssen Eigennamen, Zahlen und Fachbegriffe wortgleich wiederkehren dürfen. |
+
+`num_ctx` wird nur gesendet, wenn mehr als 4096 Token gebraucht werden. Ein
+pauschaler Wert würde eine größere globale Einstellung (`OLLAMA_CONTEXT_LENGTH`)
+wieder verkleinern.
+
+**Der Zweitversuch:** Bei einem denkenden Modell deckelt `num_predict` auch den
+Denkprozess. `qwen3.5:4b` hat für einen einzigen Satz über 1024 Token nachgedacht
+und dann gar keine Antwort mehr geschrieben – `content` war leer. ChatNicer
+erkennt das (`done_reason` ist `length` und `content` leer) und fragt genau
+**einmal ohne Deckel** nach. Das dauert dann zwar spürbar länger, ist aber besser
+als gar nichts einzufügen. Mit einem `-instruct`-Modell tritt der Fall nicht auf.
 
 ---
 
@@ -192,10 +233,11 @@ bleibt also bedienbar.
 
 ## Bekannte Grenzen
 
-* **Ein 3B-Modell bleibt ein 3B-Modell.** Die XML-Tags fangen die meisten Fälle ab,
-  aber bei Texten, die stark nach einer Anweisung an eine KI klingen, bricht das
-  Modell gelegentlich aus – eine markierte Wissensfrage wird dann beantwortet statt
-  umformuliert. Wer das nicht möchte, nimmt ein größeres Modell.
+* **Ein kleines Modell bleibt ein kleines Modell.** Die XML-Tags fangen die meisten
+  Fälle ab, aber bei Texten, die stark nach einer Anweisung an eine KI klingen, kann
+  das Modell ausbrechen und eine markierte Wissensfrage beantworten statt sie
+  umzuformulieren. Mit `llama3.2:3b` trat das gelegentlich auf; mit
+  `qwen3:4b-instruct` in den Testläufen nicht mehr – ausgeschlossen ist es nicht.
 * **Nur Text:** Gesichert und wiederhergestellt wird ausschließlich
   `CF_UNICODETEXT`. Ein Bild in der Zwischenablage ist danach weg.
 * **Fenster mit Administratorrechten:** Dort nimmt Windows (UIPI) keine simulierten
@@ -213,7 +255,7 @@ bleibt also bedienbar.
 
 Auf Windows 11 (Build 26200), VS 2022, Ollama 0.21.2 gebaut und geprüft:
 
-* Release-Build fehlerfrei bei `/W4`, 97 KB (99.328 Bytes) – über `build.bat` und MSBuild
+* Release-Build fehlerfrei bei `/W4`, 99 KB (101.376 Bytes) – über `build.bat` und MSBuild
 * 43 automatisierte Tests, davon der Großteil live gegen das lokale Ollama:
   JSON-Erzeugung, XML-Extraktion inklusive aller real beobachteten kaputten
   Tag-Schreibweisen, Denkprozess-Filter, `config.ini`-Roundtrip mit Umlauten,
@@ -226,3 +268,14 @@ Auf Windows 11 (Build 26200), VS 2022, Ollama 0.21.2 gebaut und geprüft:
 * Verhalten am lebenden Modell geprüft: „mach mir ne liste mit 5 gemüsesorten" wird
   zu „Mach mir bitte eine Liste mit fünf Gemüsesorten." umformuliert statt
   beantwortet; „ey das geht so nicht du hast das verkackt" wird höflich gefasst
+* `qwen3:4b-instruct` gegen fünf Fälle live geprüft (je ~0,3 s nach dem Laden):
+  Bitte, Aufforderung, Wissensfrage und Beschwerde wurden alle umformuliert statt
+  beantwortet, englischer Text blieb englisch
+* `num_predict`/`num_ctx` im erzeugten Payload geprüft: kurzer Text → 256 Token und
+  kein `num_ctx`; 24.000 Zeichen → 4096 Token und `num_ctx` auf 16384 angehoben
+* Zweitversuch live geprüft: `qwen3.5:4b` lieferte mit Deckel eine leere Antwort
+  (`done_reason=length`, `thinking` vollgelaufen) und nach dem Zweitversuch
+  „Könntest du mir bitte bis Freitag die Zahlen schicken?" – `qwen3:4b-instruct`
+  löst den Zweitversuch nicht aus
+* `"think": false` gegen Ollama 0.21.2 nachgemessen: weiterhin defekt, der
+  Denkprozess landet vollständig im `content`

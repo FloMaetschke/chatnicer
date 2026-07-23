@@ -34,14 +34,22 @@ Get-Process ChatNicer -ErrorAction SilentlyContinue | Stop-Process -Force
 
 ## Harte Randbedingungen
 
-**Größenbudget < 100 KB.** Aktuell 99.328 Bytes – nur ~3 KB Reserve. Erreicht wird
-das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib` (vcruntime statisch, UCRT
-dynamisch – `ucrtbase.dll` gehört ab Windows 10 zum System, deshalb kein
-VC++-Redist), dazu `/O1 /Os`, `/GL`+`/LTCG`, `/GR-`, `/GS-`, `/OPT:REF /OPT:ICF`
-und abgeschaltete Exceptions. Verwendet werden nur `<string>` und `<vector>` –
-ein zusätzliches `<sstream>`, `<iostream>` oder `<regex>` sprengt das Budget
-sofort. Nach Änderungen die Größe prüfen und bei Abweichung die Zahlen in
-`main.cpp` (Kopfkommentar) und `README.md` nachziehen.
+**Größenbudget < 200 KB** (204.800 Bytes). Aktuell 101.376 Bytes – rund 100 KB
+Reserve. Erreicht wird das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`
+(vcruntime statisch, UCRT dynamisch – `ucrtbase.dll` gehört ab Windows 10 zum
+System, deshalb kein VC++-Redist), dazu `/O1 /Os`, `/GL`+`/LTCG`, `/GR-`, `/GS-`,
+`/OPT:REF /OPT:ICF` und abgeschaltete Exceptions. Nach Änderungen die Größe
+prüfen und bei Abweichung die Zahlen in `main.cpp` (Kopfkommentar) und
+`README.md` nachziehen.
+
+Das Budget wurde von 100 KB auf 200 KB angehoben, weil der Zweitversuch in
+`Chat()` die alte Grenze bis auf 1 KB ausgereizt hatte. Der schlanke Aufbau
+bleibt trotzdem das Ziel: eingebunden sind weiterhin nur `<string>` und
+`<vector>`. `<sstream>` oder `<iostream>` kosten je einige zehn KB und passen
+jetzt zwar hinein, `<regex>` allein frisst aber einen Großteil des neuen
+Spielraums – im Zweifel von Hand parsen, so wie es `network.h` schon tut.
+Auch `build.bat compat` (194.048 B, komplett statische CRT) liegt jetzt
+innerhalb des Budgets.
 
 **`/utf-8` ist Pflicht** (in `build.bat` und `vcxproj`): Der Standard-System-Prompt
 in `config.h` enthält echte Umlaute. Ohne das Flag werden sie falsch kodiert.
@@ -105,6 +113,9 @@ gekostet haben:
   der komplette Denkprozess landet im Antworttext. Ohne den Parameter liefert
   Ollama sauber getrenntes `message.content`. `StripThinking()` entfernt zusätzlich
   alles bis zum letzten `</think>`.
+  Gegen **Ollama 0.21.2 erneut geprüft und weiterhin defekt**: `qwen3:4b` mit
+  `think:false` liefert `thinking`-Länge 0 und einen `content`, der komplett aus
+  „Okay, let's see. The user wants me to…" besteht. Nicht wieder ausprobieren.
 - **Der Prompt-Vertrag ist Code, nicht nur Text.** `WrapUserText()` verpackt den
   markierten Text in `<text_to_process>`, und der Standard-Prompt verlangt die
   Antwort in `<rewritten_text>`; `ExtractTagged()` schneidet genau das heraus.
@@ -113,6 +124,22 @@ gekostet haben:
   die Tag-Regel beibehalten. `ExtractTagged()` ist absichtlich fehlertolerant
   gegenüber `<rewritten_text` ohne `>`, fehlendem schließenden Tag und Text, der
   direkt am Tagnamen klebt – alle drei treten real auf.
+
+- **`BuildOptions()` berechnet `num_predict` und `num_ctx` aus der Textlänge.**
+  `num_ctx` wird nur gesendet, wenn > 4096 nötig – ein fester Wert würde ein
+  größer konfiguriertes `OLLAMA_CONTEXT_LENGTH` wieder verkleinern. Ohne
+  `num_predict` schreiben kleine Modelle nach dem schließenden Tag weiter; das
+  Ergebnis bleibt korrekt, die Anfrage dauert aber ein Vielfaches.
+- **`num_predict` deckelt bei denkenden Modellen auch den Denkprozess.** Real
+  gemessen an `qwen3.5:4b`: `done_reason` steht auf `length`, `thinking` ist
+  vollgelaufen, `content` ist **leer** – und zwar auch bei 1024 Token. Deshalb
+  fragt `Chat()` genau einmal mit `capLength=false` nach, wenn die Antwort leer
+  ist und das Limit erreicht wurde. Wer den Zweitversuch entfernt, bricht das
+  Tool für jedes denkende Modell. Der Fall wird über `HitTokenLimit()` +
+  `ContentIsEmpty()` erkannt, bewusst ohne Tag-Extraktion.
+- **Standardmodell ist `qwen3:4b-instruct`**, nicht `qwen3:4b`. Gleiche Größe,
+  aber ohne Denkphase (Qwen3-4B-Instruct-2507): 1–4 s statt 14–27 s. Ein
+  `qwen3:14b-instruct` gibt es in der Ollama-Library nicht, nur `4b` und `30b`.
 
 Der JSON-Leser ist ein String-Extraktor, kein Parser. `JsonFindStringFrom()`
 überspringt escapte Anführungszeichen korrekt; `ExtractChatAnswer()` sucht

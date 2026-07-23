@@ -5,14 +5,14 @@
 //  Ollama-Modell schicken und die Antwort an der Cursorposition wieder einfuegen.
 //
 //  Konfiguriert werden nur Ollama-URL (Standard http://localhost:11434) und der
-//  Modellname in Ollama-Schreibweise (Standard llama3.2:3b).
+//  Modellname in Ollama-Schreibweise (Standard qwen3:4b-instruct).
 //
 //  Keine externen Abhaengigkeiten: nur Win32 + WinHTTP (beides Teil von Windows).
 //
 // -------------------------------------------------------------------------------------
 //  BUILD (x64 Native Tools Command Prompt for VS 2022) - oder einfach: build.bat
 //
-//  Release, 99.328 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
+//  Release, 101.376 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
 //
 //    cl /nologo /std:c++17 /permissive- /W4 /MT /utf-8 /EHs-c- /D_HAS_EXCEPTIONS=0 ^
 //       /O1 /Os /Oi /Oy /Gy /Gw /GL /GR- /GS- /Zc:inline /Zc:threadSafeInit- ^

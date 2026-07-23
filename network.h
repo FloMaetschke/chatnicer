@@ -6,7 +6,8 @@
 //  robusten String-Extraktor wieder gelesen.
 //
 //  Verwendet wird POST /api/chat mit "stream": false:
-//    {"model":"qwen3:4b","stream":false,
+//    {"model":"qwen3:4b-instruct","stream":false,
+//     "options":{"repeat_penalty":1.05,"num_predict":512,"temperature":0.2},
 //     "messages":[{"role":"system","content":"..."},{"role":"user","content":"..."}]}
 //
 //  Antwort:
@@ -99,19 +100,65 @@ inline std::wstring WrapUserText(const std::wstring& userText) {
     return L"<text_to_process>" + Trim(userText) + L"</text_to_process>";
 }
 
+// Grobe Token-Schaetzung. Deutscher Text zerfaellt bei den ueblichen Tokenizern
+// in rund drei Zeichen pro Token; absichtlich grosszuegig gerechnet, damit das
+// Kontextfenster eher zu gross als zu klein ausfaellt.
+inline size_t EstimateTokens(size_t chars) { return chars / 3 + 16; }
+
+// Die "options" des Requests. Drei Werte, jeder mit einem konkreten Grund:
+//
+// - num_predict deckelt die Antwort. Ohne Deckel schreiben kleine Modelle nach
+//   dem schliessenden Tag weiter (Erklaerungen, Alternativvorschlaege) - das
+//   verwirft ExtractTagged zwar, aber die Anfrage dauert dann ein Vielfaches.
+//   Bei denkenden Modellen ist der Deckel allerdings gefaehrlich, weil der
+//   Denkprozess ihn allein aufbrauchen kann; deshalb laesst sich er ueber
+//   capLength abschalten (siehe den Zweitversuch in Chat()).
+// - num_ctx wird nur angehoben, wenn der markierte Text nicht in Ollamas
+//   Standardfenster passt. Ein pauschaler Wert wuerde eine groessere globale
+//   Einstellung (OLLAMA_CONTEXT_LENGTH) wieder verkleinern; ohne jede Angabe
+//   wird langer markierter Text dagegen stillschweigend abgeschnitten.
+// - repeat_penalty liegt unter Ollamas Standard 1.1: beim Umschreiben muessen
+//   Eigennamen, Zahlen und Fachbegriffe wortgleich wiederkehren duerfen.
+inline std::wstring BuildOptions(size_t promptChars, size_t textChars,
+                                 const std::wstring& temperature, bool capLength) {
+    size_t predict = EstimateTokens(textChars) * 2 + 128;
+    if (predict < 256)  predict = 256;
+    if (predict > 4096) predict = 4096;
+
+    size_t ctx = 4096;
+    const size_t need = EstimateTokens(promptChars + textChars + 64) + predict;
+    while (ctx < need && ctx < 32768) ctx *= 2;
+
+    wchar_t num[16];
+    std::wstring o = L"{\"repeat_penalty\":1.05";
+    if (capLength) {
+        o += L",\"num_predict\":";
+        wsprintfW(num, L"%u", static_cast<unsigned>(predict));
+        o += num;
+    }
+    if (ctx > 4096) {
+        wsprintfW(num, L"%u", static_cast<unsigned>(ctx));
+        o += L",\"num_ctx\":";
+        o += num;
+    }
+    if (!temperature.empty()) {
+        o += L",\"temperature\":";
+        o += temperature;      // in cfg::Load auf eine reine Dezimalzahl geprueft
+    }
+    o += L"}";
+    return o;
+}
+
 // Baut den Request-Body fuer POST /api/chat
 inline std::wstring BuildChatPayload(const std::wstring& model,
                                      const std::wstring& systemPrompt,
                                      const std::wstring& userText,
-                                     const std::wstring& temperature) {
+                                     const std::wstring& temperature,
+                                     bool capLength = true) {
     std::wstring j = L"{\"model\":\"";
     j += JsonEscape(model);
-    j += L"\",\"stream\":false";
-    if (!temperature.empty()) {
-        j += L",\"options\":{\"temperature\":";
-        j += temperature;      // in cfg::Load auf eine reine Dezimalzahl geprueft
-        j += L"}";
-    }
+    j += L"\",\"stream\":false,\"options\":";
+    j += BuildOptions(systemPrompt.size(), userText.size(), temperature, capLength);
     j += L",\"messages\":[";
     if (!Trim(systemPrompt).empty()) {
         j += L"{\"role\":\"system\",\"content\":\"";
@@ -265,6 +312,22 @@ inline std::wstring ExtractChatAnswer(const std::wstring& body) {
     if (JsonFindString(body, L"response", val))   // /api/generate
         return ExtractTagged(StripThinking(val));
     return std::wstring();
+}
+
+// Ollama meldet mit "done_reason":"length", dass num_predict aufgebraucht wurde.
+inline bool HitTokenLimit(const std::wstring& body) {
+    std::wstring reason;
+    return JsonFindString(body, L"done_reason", reason) && reason == L"length";
+}
+
+// Hat das Modell ueberhaupt eine Antwort geschrieben? Bewusst nur message.content
+// geprueft, ohne Tag-Extraktion - ein denkendes Modell liefert hier einen leeren
+// String, waehrend "thinking" vollgelaufen ist.
+inline bool ContentIsEmpty(const std::wstring& body) {
+    std::wstring val;
+    size_t from = body.find(L"\"message\"");
+    if (from == std::wstring::npos) from = 0;
+    return !JsonFindStringFrom(body, L"content", from, val) || Trim(val).empty();
 }
 
 // Ollama meldet Probleme als {"error":"..."} - daraus eine lesbare Meldung machen.
@@ -470,10 +533,22 @@ inline Result Chat(const std::wstring& baseUrl, const std::wstring& bearer,
         r.error = L"Kein Modell konfiguriert (z. B. llama3.2:3b).";
         return r;
     }
+    const std::wstring endpoint = BuildEndpoint(baseUrl, L"/api/chat");
     const std::wstring payload =
         BuildChatPayload(Trim(model), systemPrompt, userText, temperature);
-    return Request(BuildEndpoint(baseUrl, L"/api/chat"), L"POST", bearer,
-                   ToUtf8(payload), timeoutMs);
+    Result r = Request(endpoint, L"POST", bearer, ToUtf8(payload), timeoutMs);
+
+    // Denkende Modelle koennen das gesamte num_predict-Budget im Denkprozess
+    // verbrauchen und gar keine Antwort mehr schreiben - "content" ist dann leer
+    // und "done_reason" steht auf "length". Real beobachtet bei qwen3.5:4b, das
+    // fuer diesen einen Satz ueber 1024 Token nachgedacht hat. In dem Fall genau
+    // einmal ohne Deckel nachfragen: langsam, aber besser als nichts einzufuegen.
+    if (r.ok && HitTokenLimit(r.body) && ContentIsEmpty(r.body)) {
+        const std::wstring again =
+            BuildChatPayload(Trim(model), systemPrompt, userText, temperature, false);
+        r = Request(endpoint, L"POST", bearer, ToUtf8(again), timeoutMs);
+    }
+    return r;
 }
 
 // Liest die installierten Modelle (GET /api/tags).

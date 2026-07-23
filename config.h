@@ -16,7 +16,13 @@ namespace cfg {
 // -------------------------------------------------------------------------------------
 // Standardwerte: eine unveraenderte lokale Ollama-Installation laeuft auf Port 11434.
 static const wchar_t* kDefaultUrl   = L"http://localhost:11434";
-static const wchar_t* kDefaultModel = L"llama3.2:3b";
+
+// qwen3:4b-instruct (Qwen3-4B-Instruct-2507) ist die Instruct-Variante ohne
+// Denkphase. Das normale qwen3:4b denkt vor jeder Antwort sichtbar mit und
+// braucht dadurch 14-27 s - fuers Einfuegen im Tippfluss unbrauchbar. Die
+// Instruct-Variante antwortet in rund einer Sekunde, haelt sich aber deutlich
+// zuverlaessiger an die Tag-Regel als llama3.2:3b und beherrscht Deutsch besser.
+static const wchar_t* kDefaultModel = L"qwen3:4b-instruct";
 
 // Standard-System-Prompt.
 //
