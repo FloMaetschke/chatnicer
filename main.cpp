@@ -14,7 +14,7 @@
 // -------------------------------------------------------------------------------------
 //  BUILD (x64 Native Tools Command Prompt for VS 2022) - oder einfach: build.bat
 //
-//  Release, 109.056 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
+//  Release, 112.128 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
 //
 //    cl /nologo /std:c++17 /permissive- /W4 /MT /utf-8 /EHs-c- /D_HAS_EXCEPTIONS=0 ^
 //       /O1 /Os /Oi /Oy /Gy /Gw /GL /GR- /GS- /Zc:inline /Zc:threadSafeInit- ^
@@ -40,8 +40,8 @@
 //                         Windows 10 zum Betriebssystem -> KEIN VC++-Redist erforderlich.
 //
 //  Groessenvergleich derselben Quelle (gemessen):
-//    komplett statische CRT, mit Exceptions (/MT /EHsc) ... 204.288 B - maximal robust
-//    obige Release-Konfiguration .......................... 109.056 B - Standard
+//    komplett statische CRT, mit Exceptions (/MT /EHsc) ... 207.872 B - maximal robust
+//    obige Release-Konfiguration .......................... 112.128 B - Standard
 //    dynamische CRT (/MD) .................................  97.280 B - braucht VC++-Redist
 //
 //  Hinweis zu _HAS_EXCEPTIONS=0: bei Speichermangel bricht die STL hart ab, statt

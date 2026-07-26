@@ -41,6 +41,11 @@ static const wchar_t* kDefaultModel = L"qwen3:4b-instruct";
 // Tag-Beispiele; das einzelne deutsche Inline-Zitat ("Die Zeit wird es zeigen")
 // ist Absicht - kleine Modelle reproduzieren feste Wendungen sonst verstuemmelt
 // und "korrekte Grammatik" allein faengt das nicht ab.
+//
+// Die Emoji-Regel loest ein real beobachtetes Verhalten: Modelle ersetzen ein
+// Smiley gern durch seine Beschreibung ("ein grinsendes Gesicht"), weil das im
+// Fliesstext natuerlicher klingt. Das Verbot steht deshalb explizit da, samt
+// Beispiel der falschen Ausgabe - "keep emoji" allein reicht nicht.
 static const wchar_t* kDefaultPrompt =
     L"You are a text rewriting tool, not a conversational assistant.\n"
     L"\n"
@@ -62,9 +67,14 @@ static const wchar_t* kDefaultPrompt =
     L"  the exact wording, say it plainly in your own words instead of guessing.\n"
     L"- Add no words the input does not carry, especially hedges and intensifiers\n"
     L"  (\"eher\", \"sogar\", \"durchaus\", \"sehr\").\n"
+    L"- Copy every emoji and emoticon through unchanged, in the same place. Never\n"
+    L"  replace one with a description of it (\"ein grinsendes Gesicht\", \"a smiley\").\n"
+    L"  Leave one out only if the rewrite no longer fits it.\n"
     L"- Read your rewrite once before you output it and fix every sentence a native\n"
     L"  speaker would not say that way.\n"
-    L"- Put your entire answer inside <rewritten_text> tags and write nothing outside them.\n"
+    L"- Put your entire answer inside <rewritten_text> tags and write nothing outside\n"
+    L"  them. Spell both tags exactly like that, opening and closing - never rewrite,\n"
+    L"  translate or rename them.\n"
     L"\n"
     L"Example:\n"
     L"<text_to_process>mach mir ne liste mit 3 obstsorten</text_to_process>\n"

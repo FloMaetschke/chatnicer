@@ -13,8 +13,8 @@ stehen im [README.md](README.md).
 ## Build
 
 ```bat
-build.bat            :: Standard-Release -> build\ChatNicer.exe (109.056 B)
-build.bat compat     :: statische CRT inkl. Exceptions (204.288 B)
+build.bat            :: Standard-Release -> build\ChatNicer.exe (112.128 B)
+build.bat compat     :: statische CRT inkl. Exceptions (207.872 B)
 ```
 
 Alternativ MSBuild (liefert dieselbe EXE nach `build\Release\`):
@@ -35,8 +35,8 @@ Get-Process ChatNicer -ErrorAction SilentlyContinue | Stop-Process -Force
 
 ## Harte Randbedingungen
 
-**Größenbudget < 200 KB** (204.800 Bytes). Aktuell 109.056 Bytes – rund 93 KB
-Reserve. Erreicht wird das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`
+**Größenbudget < 200 KB** (204.800 Bytes). Standard-Release aktuell 112.128 Bytes
+– rund 92 KB Reserve; die compat-Variante liegt derzeit darüber (siehe unten). Erreicht wird das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`
 (vcruntime statisch, UCRT dynamisch – `ucrtbase.dll` gehört ab Windows 10 zum
 System, deshalb kein VC++-Redist), dazu `/O1 /Os`, `/GL`+`/LTCG`, `/GR-`, `/GS-`,
 `/OPT:REF /OPT:ICF` und abgeschaltete Exceptions. Nach Änderungen die Größe
@@ -50,8 +50,26 @@ bleibt trotzdem das Ziel: eingebunden sind weiterhin nur `<string>` und
 jetzt zwar hinein, `<regex>` allein frisst aber einen Großteil des neuen
 Spielraums – im Zweifel von Hand parsen, so wie es `network.h` schon tut.
 
-**`build.bat compat` ist der enge Fall, nicht der Standard-Release:** 204.288 B
-bei 204.800 B Budget, also 512 Bytes Luft. Der Tippmodus hat diese Variante beim
+**`build.bat compat` reißt das Budget derzeit: 207.872 B bei 204.800 B erlaubt –
+3.072 B zu viel.** Aufgelaufen ist das in zwei Schritten: die Emoji-Regel im
+Standard-Prompt hat die Variante exakt auf die Grenze gesetzt, die tolerante
+Rahmen-Erkennung (`IsFrameTagName` & Co.) hat sie darüber geschoben. Der
+Standard-Release ist davon unberührt (112.128 B, rund 92 KB Reserve).
+
+Wer das zurückholen will, hat drei Hebel:
+
+1. **Standard-Prompt auslagern.** Er kostet als `wchar_t`-Literal rund 3 KB im
+   Binary und würde allein reichen. Spart aber nur, wenn `kDefaultPrompt`
+   *ersatzlos* entfällt – bleibt ein Fallback im Code, bleibt auch der Platzbedarf.
+   Preis: die EXE ist ohne Begleitdatei nicht mehr lauffähig.
+2. **Code straffen** wie schon beim Tippmodus (siehe unten).
+3. **Das Budget für `compat` aufgeben.** Die Variante ist ohnehin nicht der
+   Standard-Release, sondern der Notnagel für Systeme ohne aktuelle UCRT.
+
+Bis das entschieden ist: Wer hier etwas ergänzt, misst weiter **beide** Varianten
+und schreibt die Zahlen mit – der Rückstand darf nicht unbemerkt wachsen.
+
+Der Tippmodus hat diese Variante beim
 ersten Wurf auf 207.360 B getrieben; wieder unter das Budget gebracht haben es
 drei Änderungen, die auch für sich sinnvoll sind und deshalb nicht
 zurückgebaut werden sollten: `Chat()`/`ChatStream()` teilen sich `ChatCore()`,
@@ -149,6 +167,19 @@ gekostet haben:
   gegenüber `<rewritten_text` ohne `>`, fehlendem schließenden Tag und Text, der
   direkt am Tagnamen klebt – alle drei treten real auf.
 
+- **Der Tagname selbst wird verschrieben.** Real aufgetreten:
+  `</rewrittening_text>` am Ende der Antwort. Die buchstabengenaue Suche greift
+  dann nicht, und das Tag landet im eingefügten Text – für den Nutzer der
+  schlimmste Fehlerfall, weil sichtbarer Müll im fremden Dokument steht.
+  `IsFrameTagName()` entscheidet deshalb über den Namen statt über exakte
+  Gleichheit: erkannt wird, was mit `rewrit` beginnt **oder** `text` enthält, aus
+  höchstens 32 Namenszeichen besteht. Ein `</div>` aus dem bearbeiteten Text
+  fällt bewusst nicht darunter und bleibt stehen. `StripStrayFrame()` räumt
+  zusätzlich einen Rahmen am Anfang oder Ende ab, den die Klammersuche verfehlt
+  hat – nur dort, denn mitten im Text ist ein `<…>` eher Inhalt als Modellfehler.
+  Der Prompt verlangt zusätzlich ausdrücklich die exakte Schreibweise; das ist
+  die Bitte, der Code ist die Absicherung.
+
 - **`BuildOptions()` berechnet `num_predict` und `num_ctx` aus der Textlänge.**
   `num_ctx` wird nur gesendet, wenn > 4096 nötig – ein fester Wert würde ein
   größer konfiguriertes `OLLAMA_CONTEXT_LENGTH` wieder verkleinern. Ohne
@@ -180,9 +211,16 @@ enthält danach nur noch die letzte Zeile (die mit `"done":true`), aus der
   ginge die Fehlermeldung aus `{"error":"..."}` verloren.
 - **`TagStream` ersetzt `ExtractTagged()` für den Stream.** Getippter Text ist
   endgültig, also hält der Filter genau so viel zurück, wie noch Teil eines Tags
-  werden könnte: am Anfang bis klar ist, ob `<rewritten_text>` (oder `<think>`)
-  beginnt; am Ende jedes Häppchens ein mögliches Präfix von `</rewritten_text`
-  und abschließender Leerraum. Ein Modell ohne Tags läuft ohne Verzögerung durch.
+  werden könnte: am Anfang bis klar ist, ob ein Rahmen-Tag (oder `<think>`)
+  beginnt; am Ende jedes Häppchens ein angefangenes `</…`, das noch ein Rahmen
+  werden könnte, und abschließender Leerraum. Ein Modell ohne Tags läuft ohne
+  Verzögerung durch.
+  **Schon ein einzelnes `<` am Pufferende muss zurückgehalten werden** – bei
+  Häppchen von einem Zeichen trifft genau das ein, und wer es durchreicht, hat
+  das Tag getippt, bevor der Rest überhaupt ankommt. Kommt danach kein `/`, ist
+  es kein Rahmen-Ende und der Text läuft sofort weiter; die Verzögerung beträgt
+  also ein Zeichen. Getestet wird das mit Deltas von 1, 3, 7 und 1000 Zeichen –
+  die Fehler treten ausschließlich bei den kleinen auf.
   Absichtlicher Unterschied zu `ExtractTagged()`: das öffnende Tag wird nur am
   Textanfang erkannt, nicht hinter einer Vorrede – im Stream ließe sich das nur
   durch Puffern kaufen, und genau das soll der Modus ja vermeiden.
@@ -206,6 +244,16 @@ BOM hat – `EnsureUnicodeIni()` legt sie deshalb vorab an. Zeilenumbrüche im
 System-Prompt werden als `\n` escaped (`EscapeIni`/`UnescapeIni`), da INI keine
 mehrzeiligen Werte kennt. Speicherort ist die EXE-Nähe, mit Ausweichen auf
 `%APPDATA%\ChatNicer\`, wenn dort nicht schreibbar.
+
+**Eine Änderung an `kDefaultPrompt` wirkt nicht, solange eine `config.ini` mit
+`SystemPrompt=` daneben liegt.** `cfg::Load()` nimmt den Default nur, wenn der
+Schlüssel fehlt – ChatNicer speichert ihn aber beim ersten OK im Dialog
+vollständig ab, auch wenn er unverändert ist. Wer den Prompt im Code anpasst und
+danach testet, misst sonst weiter den alten Stand; das Fehlerbild sieht aus wie
+„die neue Regel bringt nichts". Es gibt keinen Zurücksetzen-Knopf im Dialog, also
+vor dem Test die Zeile aus der `config.ini` löschen (der Rest der Datei bleibt
+gültig). Ob die aktive Fassung die alte ist, zeigt ein Blick in die Datei –
+`Get-Content ... -Encoding Unicode`, sie ist UTF-16.
 
 ## Testen
 

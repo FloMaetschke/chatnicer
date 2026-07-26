@@ -279,32 +279,101 @@ inline std::wstring StripThinking(const std::wstring& in) {
     return Trim(t);
 }
 
+// Zeichen, aus denen ein Tag-Name bestehen darf. Das Leerzeichen ist Absicht:
+// "</rewritten text>" gehoert zu den real beobachteten Verhunzungen.
+inline bool IsTagNameChar(wchar_t c) {
+    return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') ||
+           (c >= L'0' && c <= L'9') || c == L'_' || c == L'-' || c == L' ';
+}
+
+inline wchar_t LowerAscii(wchar_t c) {
+    return (c >= L'A' && c <= L'Z') ? (wchar_t)(c + (L'a' - L'A')) : c;
+}
+
+// Meint der Tag-Name in [a,b) unseren Antwortrahmen?
+//
+// Der buchstabengenaue Vergleich reicht nicht: real aufgetreten ist
+// "</rewrittening_text>", und ein solches Tag blieb dadurch im eingefuegten Text
+// stehen. Umgekehrt darf ein echtes </div> aus dem Nutzertext nicht als Rahmen
+// durchgehen - deshalb die Bedingung "beginnt mit rewrit oder enthaelt text"
+// statt einer allgemeinen Tag-Erkennung.
+inline bool IsFrameTagName(const std::wstring& s, size_t a, size_t b) {
+    if (b <= a || b - a > 32) return false;
+    std::wstring n;
+    for (size_t i = a; i < b; ++i) {
+        if (!IsTagNameChar(s[i])) return false;
+        n += LowerAscii(s[i]);
+    }
+    return n.compare(0, 6, L"rewrit") == 0 || n.find(L"text") != std::wstring::npos;
+}
+
+// Kann das ab s[a] angefangene Tag noch unser Rahmen werden? Nur dann lohnt es,
+// im Stream darauf zu warten. Geprueft wird gegen den Stamm "rewrit" - die
+// Verhunzungen treten hinten im Namen auf, nicht am Anfang.
+inline bool CouldBeFrameTag(const std::wstring& s, size_t a) {
+    static const wchar_t kStem[] = L"rewrit";
+    if (a < s.size() && s.size() - a > 32) return false;
+    for (size_t i = a; i < s.size(); ++i) {
+        const size_t k = i - a;
+        if (!IsTagNameChar(s[i]))                        return false;
+        if (k < 6 && LowerAscii(s[i]) != kStem[k])       return false;
+    }
+    return true;
+}
+
+// Entfernt einen Rahmen, den die buchstabengenaue Suche nicht erkannt hat -
+// aber nur am Anfang oder am Ende. Mitten im Text waere ein <...> eher echter
+// Inhalt als ein Modellfehler, und der darf nicht verschwinden.
+inline void StripStrayFrame(std::wstring& t) {
+    if (!t.empty() && t[t.size() - 1] == L'>') {
+        const size_t p = t.rfind(L'<');
+        if (p != std::wstring::npos) {
+            size_t a = p + 1;
+            if (a < t.size() && t[a] == L'/') ++a;
+            if (IsFrameTagName(t, a, t.size() - 1)) { t.resize(p); t = Trim(t); }
+        }
+    }
+    if (!t.empty() && t[0] == L'<') {
+        const size_t gt = t.find(L'>');
+        size_t a = 1;
+        if (a < t.size() && t[a] == L'/') ++a;
+        if (gt != std::wstring::npos && IsFrameTagName(t, a, gt)) {
+            t.erase(0, gt + 1);
+            t = Trim(t);
+        }
+    }
+}
+
 // Schneidet den Inhalt von <rewritten_text> heraus.
 //
 // Bewusst tolerant: kleine Modelle verhaspeln sich beim Tag regelmaessig und
-// schreiben "<rewritten_text" ohne ">", lassen das schliessende Tag weg oder
-// kleben den Text direkt an den Tag-Namen. Alle diese Faelle sind im Test gegen
-// llama3.2:3b aufgetreten und liefern hier trotzdem den richtigen Text.
-// Fehlt das Tag ganz, bleibt die Antwort unveraendert.
+// schreiben "<rewritten_text" ohne ">", lassen das schliessende Tag weg, kleben
+// den Text direkt an den Tag-Namen oder vertippen sich im Namen selbst. Alle
+// diese Faelle sind real aufgetreten und liefern hier trotzdem den richtigen
+// Text. Fehlt das Tag ganz, bleibt die Antwort unveraendert.
 inline std::wstring ExtractTagged(const std::wstring& in) {
     static const wchar_t  kOpen[]  = L"<rewritten_text";
     static const wchar_t  kClose[] = L"</rewritten_text";
     const size_t openLen = 15;   // Laenge von "<rewritten_text"
 
+    std::wstring out;
     const size_t open = in.find(kOpen);
     if (open == std::wstring::npos) {
         // Nur das schliessende Tag da? Dann steht die Antwort davor.
         const size_t lone = in.find(kClose);
-        return Trim(lone == std::wstring::npos ? in : in.substr(0, lone));
+        out = Trim(lone == std::wstring::npos ? in : in.substr(0, lone));
+    } else {
+        size_t start = open + openLen;
+        if (start < in.size() && in[start] == L'>') ++start;   // normaler Fall
+
+        size_t end = in.find(kClose, start);
+        if (end == std::wstring::npos) end = in.size();        // nicht geschlossen
+
+        out = Trim(in.substr(start, end - start));
     }
 
-    size_t start = open + openLen;
-    if (start < in.size() && in[start] == L'>') ++start;   // normaler Fall
-
-    size_t end = in.find(kClose, start);
-    if (end == std::wstring::npos) end = in.size();        // Modell hat nicht geschlossen
-
-    return Trim(in.substr(start, end - start));
+    StripStrayFrame(out);
+    return out;
 }
 
 // Liefert message.content aus der Ollama-Antwort, bereinigt um Denkprozess
@@ -413,13 +482,14 @@ struct TagStream {
                         inThink = true;
                         continue;
                     }
-                    if (CouldBecome(pending, L"<think>"))         return;   // warten
-                    if (CouldBecome(pending, L"<rewritten_text")) return;   // warten
-                    if (pending.compare(0, 15, L"<rewritten_text") == 0) {
-                        size_t p = 15;
-                        if (p >= pending.size()) return;          // folgt noch ein '>'?
-                        if (pending[p] == L'>') ++p;
-                        pending.erase(0, p);
+                    if (CouldBecome(pending, L"<think>")) return;   // warten
+                    const size_t gt = pending.find(L'>');
+                    if (gt == std::wstring::npos) {
+                        if (CouldBeFrameTag(pending, 1)) return;    // warten
+                    } else if (IsFrameTagName(pending, 1, gt)) {
+                        pending.erase(0, gt + 1);
+                    } else if (pending.compare(0, 15, L"<rewritten_text") == 0) {
+                        pending.erase(0, 15);                       // Text klebt am Namen
                     }
                 }
                 started = true;
@@ -432,11 +502,28 @@ struct TagStream {
             }
 
             // Bis zum schliessenden Tag bzw. bis zu dem, was noch eines werden kann.
+            // Gesucht wird jedes "</...>", dessen Name unser Rahmen sein koennte -
+            // "</rewrittening_text>" wuerde sonst mitgetippt und liesse sich nicht
+            // mehr zuruecknehmen. Ein fremdes </div> im Text laeuft durch.
             // Ein abschliessender Umbruch bleibt liegen, sonst stuende er vor dem Tag.
-            const size_t close = pending.find(L"</rewritten_text");
-            size_t cut = (close != std::wstring::npos)
-                       ? close
-                       : pending.size() - TailPrefixLen(pending, L"</rewritten_text");
+            size_t close = std::wstring::npos;
+            size_t cut   = pending.size();
+            for (size_t p = pending.find(L"</"); p != std::wstring::npos;
+                 p = pending.find(L"</", p + 1)) {
+                const size_t gt = pending.find(L'>', p + 2);
+                if (gt == std::wstring::npos) break;   // unvollstaendig, siehe unten
+                if (IsFrameTagName(pending, p + 2, gt)) { close = p; cut = p; break; }
+            }
+            // Am Puffer-Ende kann ein Tag gerade erst angefangen haben - schon ein
+            // einzelnes '<' muss zurueckgehalten werden, sonst ist es getippt,
+            // bevor der Rest des Tags ueberhaupt eintrifft.
+            if (close == std::wstring::npos) {
+                const size_t lt = pending.rfind(L'<');
+                if (lt != std::wstring::npos && pending.find(L'>', lt) == std::wstring::npos &&
+                    (lt + 1 == pending.size() ||
+                     (pending[lt + 1] == L'/' && CouldBeFrameTag(pending, lt + 2))))
+                    cut = lt;
+            }
             while (cut > 0 && IsWsChar(pending[cut - 1])) --cut;
 
             if (cut > 0) {
@@ -456,9 +543,12 @@ struct TagStream {
         done = true;
 
         const bool tagFragment =
-            (!started && (CouldBecome(pending, L"<rewritten_text") ||
+            (!started && pending.compare(0, 1, L"<") == 0 &&
+                         (CouldBeFrameTag(pending, 1) ||
                           CouldBecome(pending, L"<think>"))) ||
-            ( started &&  CouldBecome(pending, L"</rewritten_text"));
+            ( started && (pending == L"<" ||
+                          (pending.compare(0, 2, L"</") == 0 &&
+                           CouldBeFrameTag(pending, 2))));
         if (wasDone || tagFragment || inThink) { pending.clear(); return; }
 
         TrimLeftIn(pending);

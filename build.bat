@@ -2,8 +2,8 @@
 REM =====================================================================================
 REM  ChatNicer - Build ohne Visual Studio IDE
 REM
-REM  Aufruf:  build.bat           Standard: kleinste EXE (~85 KB), keine Redist noetig
-REM           build.bat compat    maximal kompatibel: komplett statische CRT (~176 KB)
+REM  Aufruf:  build.bat           Standard: kleinste EXE (~110 KB), keine Redist noetig
+REM           build.bat compat    maximal kompatibel: komplett statische CRT (~203 KB)
 REM
 REM  Das Skript sucht die VS-Buildtools selbst; es muss KEIN Developer Prompt offen sein.
 REM =====================================================================================
