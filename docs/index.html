@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="de" data-theme=""><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatNicer – Text per Hotkey lokal umformulieren (Windows)</title>
+<meta name="description" content="ChatNicer ersetzt markierten Text in jedem Windows-Programm per Hotkey durch eine bessere Fassung – berechnet von einem lokalen Ollama-Modell. 113 KB, keine Cloud, kein Konto.">
+<link rel="canonical" href="https://chatnicer.de/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://chatnicer.de/">
+<meta property="og:title" content="ChatNicer – Text per Hotkey lokal umformulieren">
+<meta property="og:description" content="Markierten Text per Hotkey von einem lokalen Ollama-Modell umformulieren lassen – überall in Windows. 113 KB EXE, kein Installer, keine Cloud.">
+<meta property="og:locale" content="de_DE">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="ChatNicer – Text per Hotkey lokal umformulieren">
+<meta name="twitter:description" content="113 KB Windows-Tray-Tool. Text markieren, Hotkey drücken, lokales Ollama-Modell formuliert um.">
+<meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Cpath d='M8 10.5h16M8 16h11' stroke='%23fff' stroke-width='2.6' stroke-linecap='round'/%3E%3Cpath d='M8 21.5h16' stroke='%23f59e0b' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root{
+--bg:#ffffff; --bg-2:#f5f6f8; --fg:#14181f; --fg-2:#555f6d; --line:#e2e5ea;
+--blue:#1d4ed8; --blue-2:#e8eefc; --orange:#b45309; --red:#b91c1c;
+--code-bg:#f2f4f7; --on-blue:#ffffff; --shadow:0 1px 2px rgba(16,24,40,.06),0 6px 18px rgba(16,24,40,.06);
+--radius:10px;
+}
+@media (prefers-color-scheme: dark){
+:root{
+--bg:#0e131b; --bg-2:#151c26; --fg:#e7ecf3; --fg-2:#9aa6b6; --line:#252f3d;
+--blue:#7fa9ff; --blue-2:#182238; --orange:#fbbf24; --red:#f87171; --on-blue:#0b1220;
+--code-bg:#131b26; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 22px rgba(0,0,0,.3);
+}
+}
+html[data-theme="light"]{
+--bg:#ffffff; --bg-2:#f5f6f8; --fg:#14181f; --fg-2:#555f6d; --line:#e2e5ea;
+--blue:#1d4ed8; --blue-2:#e8eefc; --orange:#b45309; --red:#b91c1c; --code-bg:#f2f4f7; --on-blue:#fff;
+--shadow:0 1px 2px rgba(16,24,40,.06),0 6px 18px rgba(16,24,40,.06);
+}
+html[data-theme="dark"]{
+--bg:#0e131b; --bg-2:#151c26; --fg:#e7ecf3; --fg-2:#9aa6b6; --line:#252f3d;
+--blue:#7fa9ff; --blue-2:#182238; --orange:#fbbf24; --red:#f87171; --code-bg:#131b26; --on-blue:#0b1220;
+--shadow:0 1px 2px rgba(0,0,0,.4),0 8px 22px rgba(0,0,0,.3);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth; scroll-padding-top:5rem; -webkit-text-size-adjust:100%}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+margin:0; background:var(--bg); color:var(--fg);
+font-family:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,"Helvetica Neue",sans-serif;
+font-size:clamp(16px,.95rem + .2vw,17px); line-height:1.62; text-wrap:pretty;
+overflow-x:hidden;
+}
+code,kbd,pre,.mono{font-family:"Cascadia Mono",Consolas,"SF Mono",ui-monospace,"Liberation Mono",monospace}
+h1,h2,h3{line-height:1.22; text-wrap:balance; margin:0}
+h1{font-size:clamp(2rem,1.4rem + 2.4vw,2.9rem); letter-spacing:-.02em; font-weight:650}
+h2{font-size:clamp(1.3rem,1.1rem + .7vw,1.6rem); letter-spacing:-.01em; font-weight:640; margin-bottom:.9rem}
+h3{font-size:1rem; font-weight:640; margin-bottom:.35rem}
+p{margin:0 0 1rem}
+a{color:var(--blue); text-underline-offset:2px}
+a:hover{color:var(--fg)}
+:focus-visible{outline:2px solid var(--blue); outline-offset:2px; border-radius:4px}
+.wrap{width:min(100% - 2.5rem,46rem); margin-inline:auto}
+@media (max-width:400px){.wrap{width:min(100% - 1.6rem,46rem)}}
+main section{padding:3.4rem 0; border-top:1px solid var(--line)}
+main section:first-child{border-top:0}
+.lead{color:var(--fg-2)}
+
+/* header */
+header{position:sticky; top:0; z-index:9; background:color-mix(in srgb,var(--bg) 88%,transparent);
+backdrop-filter:blur(8px); border-bottom:1px solid var(--line)}
+.bar{display:flex; align-items:center; gap:.9rem; height:3.4rem}
+.brand{display:flex; align-items:center; gap:.5rem; font-weight:650; color:var(--fg); text-decoration:none; letter-spacing:-.01em}
+.bar nav{display:flex; gap:1.1rem; margin-left:auto; font-size:.9rem}
+.bar nav a{color:var(--fg-2); text-decoration:none}
+.bar nav a:hover{color:var(--fg)}
+@media (max-width:640px){.bar nav{display:none}}
+.iconbtn{margin-left:auto; display:grid; place-items:center; width:2.1rem; height:2.1rem; padding:0;
+background:none; border:1px solid var(--line); border-radius:8px; color:var(--fg-2); cursor:pointer;
+transition:color .12s,border-color .12s,background .12s}
+.bar nav + .iconbtn{margin-left:0}
+.iconbtn:hover{color:var(--fg); border-color:var(--fg-2)}
+.sun{display:none}.moon{display:block}
+@media (prefers-color-scheme: dark){html:not([data-theme="light"]) .sun{display:block}html:not([data-theme="light"]) .moon{display:none}}
+html[data-theme="dark"] .sun{display:block}html[data-theme="dark"] .moon{display:none}
+html[data-theme="light"] .sun{display:none}html[data-theme="light"] .moon{display:block}
+
+/* buttons */
+.btn{display:inline-flex; align-items:center; gap:.5rem; padding:.62rem 1.05rem; border-radius:8px;
+font-weight:600; font-size:.95rem; text-decoration:none; border:1px solid transparent; cursor:pointer;
+transition:background .12s,border-color .12s,color .12s}
+.btn-p{background:var(--blue); color:var(--on-blue); box-shadow:var(--shadow)}
+.btn-p:hover{background:color-mix(in srgb,var(--blue) 82%,var(--fg))}
+.btn-s{border-color:var(--line); color:var(--fg); background:var(--bg)}
+.btn-s:hover{border-color:var(--fg-2); color:var(--fg)}
+.btn-sm{padding:.35rem .7rem; font-size:.85rem}
+.btn-lg{padding:.85rem 1.4rem; font-size:1.05rem}
+@media (max-width:520px){.hdr-dl{display:none}}
+
+/* hero */
+.hero{padding-top:3.6rem}
+.hero p.sub{font-size:1.12rem; color:var(--fg-2); max-width:34em; margin:1rem 0 1.6rem}
+.actions{display:flex; flex-wrap:wrap; gap:.7rem; margin-bottom:1.5rem}
+.chips{display:flex; flex-wrap:wrap; gap:.5rem; margin:0 0 .9rem; padding:0; list-style:none}
+.chip{font:600 .85rem/1 var(--mono,inherit); font-family:"Cascadia Mono",Consolas,ui-monospace,monospace;
+padding:.42rem .7rem; border:1px solid var(--line); border-radius:999px; background:var(--bg-2)}
+.chip b{color:var(--blue)}
+.req{font-size:.87rem; color:var(--fg-2); margin:0}
+
+/* flow */
+.scrollx{overflow-x:auto; overscroll-behavior-x:contain; margin:0 0 1.8rem; padding-bottom:.4rem}
+.flow{display:block; min-width:38rem; width:100%; height:auto}
+.flow text{font-family:"Segoe UI",system-ui,sans-serif}
+
+/* before/after */
+.ba{display:grid; gap:.8rem; margin:0 0 1.1rem}
+.ba-row{display:grid; grid-template-columns:1fr auto 1fr; gap:.7rem; align-items:stretch}
+@media (max-width:640px){.ba-row{grid-template-columns:1fr; gap:.35rem}.ba-row .arrow{transform:rotate(90deg); justify-self:start}}
+.ba-cell{border:1px solid var(--line); border-radius:var(--radius); padding:.62rem .8rem; background:var(--bg-2);
+font-size:.93rem; overflow-wrap:anywhere}
+.ba-cell.after{background:var(--blue-2); border-color:color-mix(in srgb,var(--blue) 35%,var(--line))}
+.ba-cell .tag{display:block; font-size:.7rem; letter-spacing:.07em; text-transform:uppercase; color:var(--fg-2); margin-bottom:.2rem}
+.arrow{align-self:center; color:var(--fg-2)}
+.note{font-size:.87rem; color:var(--fg-2); margin:.1rem 0 0}
+
+/* feature list */
+.feat{display:grid; grid-template-columns:repeat(auto-fit,minmax(15rem,1fr)); gap:.1rem 2.2rem; margin:0; padding:0; list-style:none}
+.feat li{padding:.7rem 0; border-bottom:1px solid var(--line)}
+.feat b{display:block; font-weight:640}
+.feat span{color:var(--fg-2); font-size:.92rem}
+
+/* steps */
+ol.steps{margin:0; padding:0; list-style:none; counter-reset:s}
+ol.steps>li{counter-increment:s; position:relative; padding:0 0 1.4rem 2.5rem}
+ol.steps>li::before{content:counter(s); position:absolute; left:0; top:.05rem; width:1.65rem; height:1.65rem;
+display:grid; place-items:center; border-radius:50%; background:var(--blue-2); color:var(--blue);
+font-size:.85rem; font-weight:700}
+
+/* code */
+.code{position:relative; margin:.55rem 0 0; background:var(--code-bg); border:1px solid var(--line);
+border-radius:var(--radius); display:flex; align-items:center; gap:.5rem}
+.code pre{margin:0; padding:.65rem .8rem; overflow-x:auto; flex:1; font-size:.88rem}
+.copy{flex:none; margin:.35rem .35rem .35rem 0; padding:.3rem .55rem; font-size:.78rem; font-weight:600;
+border:1px solid var(--line); background:var(--bg); color:var(--fg-2); border-radius:6px; cursor:pointer;
+transition:color .12s,border-color .12s}
+.copy:hover{color:var(--fg); border-color:var(--fg-2)}
+code.i{background:var(--code-bg); border:1px solid var(--line); border-radius:5px; padding:.05em .35em; font-size:.88em}
+kbd{background:var(--bg-2); border:1px solid var(--line); border-bottom-width:2px; border-radius:5px;
+padding:.08em .4em; font-size:.85em; white-space:nowrap}
+
+/* download */
+.dl{background:var(--bg-2); border:1px solid var(--line); border-radius:14px; padding:1.6rem; box-shadow:var(--shadow)}
+.dl-meta{display:flex; flex-wrap:wrap; gap:.35rem 1.2rem; font-size:.88rem; color:var(--fg-2); margin:1rem 0 0}
+.dl-links{display:flex; flex-wrap:wrap; gap:1.1rem; font-size:.9rem; margin-top:.9rem}
+.warn{display:flex; gap:.6rem; font-size:.88rem; color:var(--fg-2); margin-top:1.1rem;
+padding-top:1rem; border-top:1px solid var(--line)}
+.warn svg{flex:none; color:var(--orange); margin-top:.15rem}
+.rel{margin:0; padding:0; list-style:none}
+.rel li{padding:.85rem 0; border-top:1px solid var(--line)}
+.rel h3{font-size:.95rem; display:flex; flex-wrap:wrap; gap:.6rem; align-items:baseline}
+.rel h3 .v{font-family:"Cascadia Mono",Consolas,ui-monospace,monospace; color:var(--blue)}
+.rel h3 time{font-size:.82rem; font-weight:400; color:var(--fg-2)}
+.rel ul{margin:.3rem 0 0; padding-left:1.1rem; color:var(--fg-2); font-size:.92rem}
+.rel ul li{padding:0; border:0}
+
+/* tray states */
+.tray{display:flex; flex-wrap:wrap; gap:1.4rem; margin:0 0 1.2rem; padding:0; list-style:none; font-size:.9rem}
+.tray li{display:flex; align-items:center; gap:.5rem}
+
+/* details */
+details{border-bottom:1px solid var(--line)}
+details:first-of-type{border-top:1px solid var(--line)}
+summary{cursor:pointer; padding:.9rem .2rem .9rem 1.5rem; font-weight:600; position:relative; list-style:none;
+transition:color .12s}
+summary::-webkit-details-marker{display:none}
+summary::before{content:""; position:absolute; left:.25rem; top:1.28rem; width:.42rem; height:.42rem;
+border-right:2px solid var(--fg-2); border-bottom:2px solid var(--fg-2); transform:rotate(-45deg);
+transition:transform .12s}
+details[open]>summary::before{transform:rotate(45deg); top:1.15rem}
+summary:hover{color:var(--blue)}
+.det-body{padding:.1rem .2rem 1.3rem 1.5rem}
+.det-body>*:last-child{margin-bottom:0}
+table{border-collapse:collapse; width:100%; min-width:32rem; font-size:.9rem}
+th,td{text-align:left; padding:.5rem .7rem; border-bottom:1px solid var(--line); vertical-align:top}
+th{font-weight:640; color:var(--fg-2); font-size:.82rem; letter-spacing:.02em; text-transform:uppercase}
+td.num{text-align:right; font-family:"Cascadia Mono",Consolas,ui-monospace,monospace; white-space:nowrap}
+tr.hl td{background:var(--blue-2)}
+.qa{margin:0; }
+.qa dt{font-weight:600; margin-top:.7rem}
+.qa dd{margin:0; color:var(--fg-2)}
+ul.plain{margin:0 0 1rem; padding-left:1.15rem}
+ul.plain li{margin-bottom:.4rem}
+
+footer{border-top:1px solid var(--line); padding:1.8rem 0 2.6rem; font-size:.87rem; color:var(--fg-2)}
+footer ul{display:flex; flex-wrap:wrap; gap:.4rem 1.1rem; margin:0 0 .5rem; padding:0; list-style:none}
+</style>
+
+</head>
+<body>
+<script>try{var t=localStorage.getItem("cn-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+
+<header>
+<div class="wrap bar">
+<a class="brand" href="#top">
+<svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor" style="color:var(--blue)"></rect><path d="M8 10.5h16M8 16h11" stroke="var(--bg)" stroke-width="2.8" stroke-linecap="round"></path><path d="M8 21.5h16" stroke="var(--bg)" stroke-width="2.8" stroke-linecap="round" opacity=".55"></path></svg>
+ChatNicer</a>
+<nav aria-label="Abschnitte">
+<a href="#funktion">So funktioniert’s</a>
+<a href="#installation">Installation</a>
+<a href="#details">Details</a>
+</nav>
+<a class="btn btn-p btn-sm hdr-dl" href="#download">Download</a>
+<button class="iconbtn" id="theme" type="button" aria-label="Zwischen hellem und dunklem Design wechseln">
+<svg class="sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"></path></svg>
+<svg class="moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"></path></svg>
+</button>
+</div>
+</header>
+
+<main id="top">
+
+<!-- 1 Hero -->
+<section class="hero">
+<div class="wrap">
+<h1>Besser formulieren, ohne das Fenster zu wechseln.</h1>
+<p class="sub">ChatNicer ersetzt markierten Text per Hotkey durch eine bessere Fassung – gerechnet von einem lokalen Ollama-Modell, überall in Windows.</p>
+<div class="actions">
+<a class="btn btn-p btn-lg" href="https://github.com/FloMaetschke/chatnicer/releases/latest/download/ChatNicer.exe">ChatNicer.exe herunterladen</a>
+<a class="btn btn-s btn-lg" href="https://github.com/FloMaetschke/chatnicer">Auf GitHub ansehen</a>
+</div>
+<ul class="chips">
+<li class="chip"><b>113 KB</b> EXE</li>
+<li class="chip"><b>~1 Sekunde</b> pro Anfrage</li>
+<li class="chip"><b>100 %</b> lokal</li>
+</ul>
+<p class="req">Windows 10/11 · x64 · benötigt ein laufendes <a href="https://ollama.com">Ollama</a></p>
+</div>
+</section>
+
+<!-- 2 So funktioniert's -->
+<section id="funktion">
+<div class="wrap">
+<h2>So funktioniert’s</h2>
+<p class="lead">Kein Chatfenster, keine Zwischenstation: Die Markierung selbst wird ersetzt – im Outlook-Entwurf, im Teams-Eingabefeld, im Editor.</p>
+<div class="scrollx">
+<svg class="flow" viewBox="0 0 660 96" role="img" aria-label="Ablauf: Text markieren, Hotkey STRG SHIFT LEERTASTE drücken, lokales Modell antwortet, Markierung wird ersetzt.">
+<defs><marker id="a" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0l8 4-8 4z" fill="currentColor"></path></marker></defs>
+<g fill="none" stroke="var(--fg-2)" stroke-width="1.5" marker-end="url(#a)" color="var(--fg-2)">
+<path d="M150 40h22"></path><path d="M312 40h22"></path><path d="M474 40h22"></path>
+</g>
+<g stroke="var(--line)" fill="var(--bg-2)" stroke-width="1">
+<rect x="1" y="17" width="148" height="46" rx="9"></rect><rect x="173" y="17" width="138" height="46" rx="9"></rect>
+<rect x="335" y="17" width="138" height="46" rx="9"></rect><rect x="497" y="17" width="162" height="46" rx="9"></rect>
+</g>
+<g fill="var(--fg)" font-size="13.5" font-weight="600" text-anchor="middle">
+<text x="75" y="45">Text markieren</text>
+<text x="242" y="45" font-family="Consolas,monospace" font-size="11">STRG+SHIFT+LEERTASTE</text>
+<text x="404" y="45">localhost:11434</text>
+<text x="578" y="45">Markierung ersetzt</text>
+</g>
+<g fill="var(--fg-2)" font-size="11" text-anchor="middle">
+<text x="75" y="79">in jedem Programm</text>
+<text x="242" y="79">frei konfigurierbar</text>
+<text x="404" y="79">Ollama, lokal</text>
+<text x="578" y="79">Original bleibt Auswahl</text>
+</g>
+</svg>
+</div>
+
+<div class="ba">
+<div class="ba-row">
+<div class="ba-cell"><span class="tag">markiert</span>das ist ein test mit fehlan</div>
+<svg class="arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"></path></svg>
+<div class="ba-cell after"><span class="tag">eingefügt</span>Das ist ein Test mit Fehlern.</div>
+</div>
+<div class="ba-row">
+<div class="ba-cell"><span class="tag">markiert</span>mach mir ne liste mit 5 gemüsesorten</div>
+<svg class="arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"></path></svg>
+<div class="ba-cell after"><span class="tag">eingefügt</span>Mach mir bitte eine Liste mit fünf Gemüsesorten.</div>
+</div>
+<div class="ba-row">
+<div class="ba-cell"><span class="tag">markiert</span>ey das geht so nicht du hast das verkackt</div>
+<svg class="arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"></path></svg>
+<div class="ba-cell after"><span class="tag">eingefügt</span>So funktioniert das leider nicht, hier ist etwas schiefgelaufen.</div>
+</div>
+</div>
+<p class="note">Beim zweiten Beispiel ist der Punkt: Die Bitte wird <strong>umformuliert, nicht beantwortet</strong>. Genau daran scheitern kleine Modelle sonst – wie das verhindert wird, steht in <a href="#details">Abschnitt&nbsp;7</a>.</p>
+</div>
+</section>
+
+<!-- 3 Was es kann -->
+<section id="funktionen">
+<div class="wrap">
+<h2>Was es kann</h2>
+<ul class="tray">
+<li><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="4" fill="var(--blue)"></rect></svg> blau: bereit</li>
+<li><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="4" fill="var(--orange)"></rect></svg> orange: Modell arbeitet</li>
+<li><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="4" fill="var(--red)"></rect></svg> rot: Fehler, mit Klartext-Hinweis</li>
+</ul>
+<ul class="feat">
+<li><b>Zwei Modi</b><span>Einfügen (Antwort kommt fertig über die Zwischenablage) oder Live tippen (Streaming, ~1,3 s für 271 Zeichen).</span></li>
+<li><b>Warmup beim Start</b><span>Lädt das Modell mit einer leeren Anfrage in Ollamas Speicher – spart der ersten echten Anfrage rund 4 Sekunden.</span></li>
+<li><b>Freier Hotkey</b><span>Voreingestellt <kbd>STRG</kbd>&nbsp;+&nbsp;<kbd>SHIFT</kbd>&nbsp;+&nbsp;<kbd>Leertaste</kbd>, im Dialog änderbar.</span></li>
+<li><b>Modellauswahl</b><span>Auswahlliste aus den Modellen, die auf dem Rechner tatsächlich installiert sind.</span></li>
+<li><b>Eigener System-Prompt</b><span>Ebenso Temperature und Timeout – gespeichert in einer <code class="i">config.ini</code> neben der EXE.</span></li>
+<li><b>Zwischenablage bleibt heil</b><span>Der vorherige Inhalt wird nach dem Einfügen wiederhergestellt, auch auf jedem Fehlerpfad.</span></li>
+<li><b>Verbindungstest</b><span>Ein Klick im Einstellungsdialog prüft, ob Ollama erreichbar ist und das Modell antwortet.</span></li>
+<li><b>Statusanzeige im Tray</b><span>Das Icon zeigt jederzeit, woran das Programm gerade ist (siehe oben).</span></li>
+</ul>
+<!-- Screenshot: Einstellungsdialog - sobald verf&uuml;gbar hier als &lt;img&gt; mit width/height einsetzen (lokale Datei, kein fremder Host). -->
+</div>
+</section>
+
+<!-- 4 Installation -->
+<section id="installation">
+<div class="wrap">
+<h2>Installation</h2>
+<ol class="steps">
+<li>
+<h3>Ollama installieren und das Modell holen</h3>
+<p class="lead" style="margin-bottom:0">Von <a href="https://ollama.com">ollama.com</a>, danach in der Eingabeaufforderung:</p>
+<div class="code"><pre><code>ollama pull qwen3:4b-instruct</code></pre><button class="copy" type="button" data-copy="ollama pull qwen3:4b-instruct">Kopieren</button></div>
+</li>
+<li>
+<h3>ChatNicer.exe herunterladen und irgendwohin legen</h3>
+<p class="lead" style="margin-bottom:0">Eine Datei, kein Installer, keine Registry-Einträge. Ein Ordner im Benutzerverzeichnis genügt; daneben legt das Programm später seine <code class="i">config.ini</code> ab.</p>
+</li>
+<li>
+<h3>Starten</h3>
+<p class="lead" style="margin-bottom:0">Beim ersten Start öffnet sich der Einstellungsdialog. Modell wählen, Verbindung testen, fertig – danach lebt ChatNicer im Tray.</p>
+</li>
+</ol>
+<p class="note" style="margin-top:.4rem">Autostart: <kbd>Win</kbd>&nbsp;+&nbsp;<kbd>R</kbd>, <code class="i">shell:startup</code> eingeben und eine Verknüpfung zur EXE hineinlegen.</p>
+<div class="code" style="max-width:22rem"><pre><code>shell:startup</code></pre><button class="copy" type="button" data-copy="shell:startup">Kopieren</button></div>
+</div>
+</section>
+
+<!-- 5 Lokal und privat -->
+<section id="privat">
+<div class="wrap">
+<h2>Lokal und privat</h2>
+<p>Jede Anfrage geht an <code class="i">http://localhost:11434</code> – also an das Ollama auf demselben Rechner. Der markierte Text verlässt die Maschine nicht.</p>
+<p>Kein Konto, kein API-Schlüssel, keine Telemetrie, kein Auto-Update. ChatNicer öffnet keine Netzverbindung außer der zu Ollama; ist eine entfernte Ollama-Instanz eingetragen, geht sie genau dorthin und sonst nirgends.</p>
+</div>
+</section>
+
+<!-- 6 Download -->
+<section id="download">
+<div class="wrap">
+<h2>Download</h2>
+<div class="dl">
+<a class="btn btn-p btn-lg" href="https://github.com/FloMaetschke/chatnicer/releases/latest/download/ChatNicer.exe">ChatNicer.exe · 113 KB</a>
+<div class="dl-meta">
+<span>Version 1.2</span><span>115.712 Bytes</span><span>Windows 10/11, x64</span>
+</div>
+<div class="dl-meta" style="align-items:center">
+<span>SHA-256</span>
+<!-- Platzhalter: echte Pr&uuml;fsumme des Release-Artefakts eintragen -->
+<div class="code" style="margin:0; flex:1; min-width:14rem"><pre><code>&lt;Prüfsumme wird mit dem Release nachgetragen&gt;</code></pre><button class="copy" type="button" data-copy="&lt;Pruefsumme wird mit dem Release nachgetragen&gt;">Kopieren</button></div>
+</div>
+<div class="dl-links">
+<a href="https://github.com/FloMaetschke/chatnicer/releases">Alle Releases</a>
+<a href="https://github.com/FloMaetschke/chatnicer#build">Selbst bauen</a>
+</div>
+<div class="warn">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3l9.5 17h-19z"></path><path d="M12 10v4M12 17.5v.01"></path></svg>
+<p style="margin:0">Die EXE ist nicht signiert, deshalb warnt Windows SmartScreen beim ersten Start. Über <em>Weitere Informationen</em> → <em>Trotzdem ausführen</em> geht es weiter. Wer das nicht mag: <code class="i">build.bat</code> im Repository baut die EXE in unter einer Minute selbst – Visual Studio 2022 muss nicht installiert sein, das Skript findet die Buildtools.</p>
+</div>
+</div>
+
+<h3 style="margin:2.4rem 0 .2rem; font-size:1.05rem">Versionen</h3>
+<ul class="rel">
+<li>
+<h3><span class="v">v1.2</span> <time datetime="2026-07-26">26.07.2026</time></h3>
+<ul><li>Start-Warmup lädt das Modell schon beim Programmstart</li><li>Emoji-Regel im System-Prompt: Smileys werden nicht mehr in Worte übersetzt</li><li>Tolerantere Erkennung verschriebener Antwort-Tags</li></ul>
+</li>
+<li>
+<h3><span class="v">v1.1</span> <time datetime="2026-07-23">23.07.2026</time></h3>
+<ul><li>Tippmodus: Antwort wird live getippt, während das Modell streamt (<code class="i">"stream": true</code> plus inkrementeller Tag-Filter)</li></ul>
+</li>
+<li>
+<h3><span class="v">v1.0</span> <time datetime="2026-07-23">23.07.2026</time></h3>
+<ul><li>Standardmodell auf <code class="i">qwen3:4b-instruct</code> umgestellt: 1–4 s statt 14–27 s</li><li>Modellauswahl aus den installierten Modellen, Verbindungstest</li></ul>
+</li>
+</ul>
+<details>
+<summary>Ältere Versionen</summary>
+<div class="det-body">
+<ul class="rel" style="margin:0">
+<li style="border-top:0; padding-top:0">
+<h3><span class="v">v0.9</span> <time datetime="2026-07-23">23.07.2026</time></h3>
+<ul><li>Erste Fassung: Tray-Icon, globaler Hotkey, WinHTTP-Anbindung an die Ollama-API</li><li>Handgeschriebener JSON-Umgang, Einstellungsdialog, <code class="i">config.ini</code></li></ul>
+</li>
+</ul>
+</div>
+</details>
+</div>
+</section>
+
+<!-- 7 Details -->
+<section id="details">
+<div class="wrap">
+<h2>Details für Interessierte</h2>
+
+<details>
+<summary>Welches Modell soll ich nehmen?</summary>
+<div class="det-body">
+<p><strong>Die Endung entscheidet, nicht die Größe.</strong> <code class="i">qwen3:4b</code> und <code class="i">qwen3:4b-instruct</code> sind gleich groß – die Instruct-Variante hat die Denkphase gar nicht erst.</p>
+<div class="scrollx">
+<table>
+<thead><tr><th>Modell</th><th>Dauer pro Anfrage</th><th>Bewertung</th></tr></thead>
+<tbody>
+<tr class="hl"><td><strong>qwen3:4b-instruct</strong></td><td>~0,3 s</td><td>Standard: hält sich am zuverlässigsten an die Tag-Regel, bestes Deutsch</td></tr>
+<tr><td>llama3.2:3b</td><td>~0,3–1 s</td><td>ähnlich schnell, verhaspelt sich aber häufiger beim Tag</td></tr>
+<tr><td>qwen3:4b</td><td>14–27 s</td><td>dieselbe Größe, denkt aber sichtbar mit – fürs Inline-Einfügen zu langsam</td></tr>
+<tr><td>qwen3.5:4b</td><td>~16 s</td><td>denkt noch ausdauernder</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+</details>
+
+<details>
+<summary>Warum ist die EXE nur 113 KB?</summary>
+<div class="det-body">
+<p>Reines Win32 plus WinHTTP, keine einzige externe Bibliothek: kein .NET, kein Electron, kein curl, keine JSON-Bibliothek. Die vcruntime wird statisch gebunden, die Universal CRT dynamisch – <code class="i">ucrtbase.dll</code> gehört seit Windows 10 zum System, deshalb braucht es kein Redistributable. Dazu <code class="i">/O1 /Os</code>, <code class="i">/GL</code> mit <code class="i">/LTCG</code>, <code class="i">/GR-</code>, <code class="i">/GS-</code>, <code class="i">/OPT:REF /OPT:ICF</code> und abgeschaltete Exceptions. Die Icons zeichnet das Programm zur Laufzeit, es gibt keine Ressourcendatei.</p>
+<div class="scrollx">
+<table>
+<thead><tr><th>Variante</th><th style="text-align:right">Größe</th><th>Laufzeitabhängigkeit</th></tr></thead>
+<tbody>
+<tr class="hl"><td><strong>Standard-Release</strong></td><td class="num"><strong>115.712 B</strong></td><td>nur <code class="i">ucrtbase.dll</code> (Windows-Systemdatei)</td></tr>
+<tr><td>statische CRT + Exceptions</td><td class="num">212.480 B</td><td>keine</td></tr>
+<tr><td>dynamische CRT (<code class="i">/MD</code>)</td><td class="num">103.936 B</td><td>VC++-Redistributable erforderlich</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+</details>
+
+<details>
+<summary>Wie bringt man ein 4B-Modell dazu, den Text nicht zu beantworten?</summary>
+<div class="det-body">
+<p>Der markierte Text wird nie roh in den Prompt geschrieben, sondern in <code class="i">&lt;text_to_process&gt;</code> verpackt. Ohne diese Klammer hält ein kleines Modell „was ist die hauptstadt von frankreich?“ für eine Frage an sich selbst und antwortet „Paris“, statt den Satz zu glätten.</p>
+<p>Die Antwort muss ihrerseits in <code class="i">&lt;rewritten_text&gt;</code> stehen und wird genau daraus herausgeschnitten – Vorreden wie „Hier ist mein Versuch:“ landen also nie im Dokument. Das Herausschneiden ist bewusst fehlertolerant: verschriebene, halb geschlossene oder mit Leerzeichen verunstaltete Tags werden trotzdem erkannt, weil kleine Modelle sich genau dort verhaspeln.</p>
+</div>
+</details>
+
+<details>
+<summary>Was kann es nicht?</summary>
+<div class="det-body">
+<ul class="plain">
+<li>Ein kleines Modell bleibt ein kleines Modell: Bei Texten, die stark nach einer Anweisung an eine KI klingen, kann es ausbrechen.</li>
+<li>Nur Text: Gesichert und wiederhergestellt wird ausschließlich Unicode-Text. Ein Bild in der Zwischenablage ist danach weg.</li>
+<li>Im Tippmodus werden Zeilenumbrüche als <kbd>ENTER</kbd> getippt – in Chat-Eingabefeldern (Teams, Slack, WhatsApp Web) schickt das die Nachricht ab. Für mehrzeilige Texte ist dort der Einfügemodus die sichere Wahl.</li>
+<li>Im Tippmodus gibt es ab dem ersten Zeichen kein Zurück: Bricht die Verbindung ab, bleibt der halbe Text stehen.</li>
+<li>Fenster mit Administratorrechten nehmen keine simulierten Tastendrücke an (UIPI). Abhilfe: ChatNicer ebenfalls als Administrator starten.</li>
+<li>Nur x64.</li>
+</ul>
+</div>
+</details>
+
+<details>
+<summary>Kurze Fragen</summary>
+<div class="det-body">
+<dl class="qa">
+<dt>Braucht das Internet?</dt><dd>Nein, nur ein laufendes Ollama.</dd>
+<dt>Kostet es etwas?</dt><dd>Nein, Open Source.</dd>
+<dt>Kann ich den Prompt ändern, z.&nbsp;B. zum Übersetzen?</dt><dd>Ja – die <code class="i">&lt;rewritten_text&gt;</code>-Regel muss aber stehen bleiben.</dd>
+<dt>Warum warnt Windows beim Start?</dt><dd>Die EXE ist nicht signiert.</dd>
+<dt>Ollama auf einem anderen Rechner?</dt><dd>Ja, URL und optionaler API-Key sind konfigurierbar.</dd>
+<dt>macOS oder Linux?</dt><dd>Nein, reines Win32.</dd>
+</dl>
+</div>
+</details>
+
+</div>
+</section>
+</main>
+
+<footer>
+<div class="wrap">
+<ul>
+<li><a href="https://github.com/FloMaetschke/chatnicer">Repository</a></li>
+<li><a href="https://github.com/FloMaetschke/chatnicer/blob/main/LICENSE">Lizenz</a></li>
+<li><a href="https://github.com/FloMaetschke/chatnicer/issues">Issues</a></li>
+</ul>
+<p style="margin:0 0 .4rem">Fehler, Fragen oder Wünsche? Bitte über die <a href="https://github.com/FloMaetschke/chatnicer/issues">GitHub Issues</a> – dort wird alles gesammelt, eine Mailadresse gibt es nicht.</p>
+<p style="margin:0">Nicht mit Ollama oder Anthropic affiliiert. Diese Seite: eine Datei, ein Request, rund 30&nbsp;KB – etwa ein Viertel des Programms.</p>
+</div>
+</footer>
+
+<script>
+document.getElementById("theme").addEventListener("click",function(){
+var d=document.documentElement,c=d.dataset.theme;
+if(!c)c=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";
+c=c==="dark"?"light":"dark";d.dataset.theme=c;
+try{localStorage.setItem("cn-theme",c)}catch(e){}
+});
+document.addEventListener("click",function(e){
+var b=e.target.closest("[data-copy]");if(!b)return;
+navigator.clipboard.writeText(b.dataset.copy).then(function(){
+var t=b.textContent;b.textContent="Kopiert";setTimeout(function(){b.textContent=t},1200);
+});
+});
+</script>
+
+
+</body></html>
