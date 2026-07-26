@@ -8,7 +8,10 @@ on:
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  # Auf main NICHT abbrechen: dort haengt das Release am Lauf, und ein mitten im
+  # Veroeffentlichen abgeschossener Job kann den Tag geloescht und das Release noch
+  # nicht angelegt haben. PR-Laeufe duerfen sich weiter gegenseitig ersetzen.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -141,3 +144,130 @@ jobs:
             Write-Host "::error::MSBuild-Release ueber dem Budget von 204800 Bytes"
             exit 1
           }
+
+  # ---------------------------------------------------------------------------
+  #  Rollendes Release "latest": bei jedem Push auf main wird der Stand als
+  #  Prerelease veroeffentlicht, Tag und Assets werden dabei ersetzt. Laeuft nur
+  #  auf main und nur, wenn beide Build-Jobs gruen sind - ein Release, das das
+  #  Groessenbudget reisst oder die Solution zerlegt, soll niemand herunterladen.
+  #
+  #  Bewusst nur ChatNicer.exe: die compat-Variante ist der Notnagel fuer Systeme
+  #  ohne aktuelle UCRT und liegt derzeit ueber dem Budget. Wer sie braucht, holt
+  #  sie aus dem Build-Artefakt oder baut selbst.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Rolling Release (latest)
+    needs: [ build, msbuild ]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    # Releases duerfen sich nicht ueberholen: zwei schnell aufeinanderfolgende
+    # Pushes wuerden sonst gleichzeitig am Tag "latest" arbeiten.
+    concurrency:
+      group: release-latest
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Gebaute EXE holen
+        uses: actions/download-artifact@v4
+        with:
+          name: ChatNicer-x64
+          path: dist
+
+      - name: Release-Notes schreiben
+        shell: pwsh
+        run: |
+          $exe = 'dist\ChatNicer.exe'
+          if (-not (Test-Path $exe)) {
+            Write-Host "::error::$exe fehlt im Artefakt"
+            exit 1
+          }
+
+          $size  = (Get-Item $exe).Length
+          $hash  = (Get-FileHash $exe -Algorithm SHA256).Hash
+          $sha   = $env:GITHUB_SHA
+          $short = $sha.Substring(0, 7)
+          $repo  = $env:GITHUB_REPOSITORY
+          # Commit-Titel ueber git statt ueber github.event.head_commit.message:
+          # eine Commit-Message direkt in den Skripttext zu interpolieren ist der
+          # klassische Weg, sich Fremdcode in den Runner zu holen.
+          $subject = git log -1 --pretty=format:%s $sha
+          if ([string]::IsNullOrWhiteSpace($subject)) { $subject = '(kein Commit-Titel)' }
+          $subject = $subject -replace '\|', '\|'   # sonst zerlegt er die Tabelle
+          $built = [datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm') + ' UTC'
+
+          # Zeilenarray statt Here-String: dessen Inhalt muesste in Spalte 0 stehen
+          # und wuerde den YAML-Block sprengen. Nebeneffekt, der hier passt: in
+          # einfachen Anfuehrungszeichen ist der Backtick fuer Markdown-Code
+          # literal, statt PowerShells Escape-Zeichen zu sein.
+          #
+          # Der Hash gehoert in die Notes: die EXE ist unsigniert, er ist fuer den
+          # Nutzer der einzige Weg, den Download gegen das Repo zu pruefen (README,
+          # Abschnitt "Download pruefen").
+          $notes = @(
+            'Automatischer Build vom letzten Stand auf `main`.'
+            'Dieses Release wird bei jedem weiteren Push auf `main` ueberschrieben.'
+            ''
+            '| | |'
+            '| --- | --- |'
+            "| Commit | [$short](https://github.com/$repo/commit/$sha) - $subject |"
+            "| Gebaut | $built |"
+            "| Groesse | $size Bytes |"
+            ''
+            '**SHA256 (ChatNicer.exe)**'
+            ''
+            '```'
+            $hash
+            '```'
+            ''
+            'Nachrechnen: `Get-FileHash .\ChatNicer.exe -Algorithm SHA256`'
+            ''
+            'Die EXE ist unsigniert - beim ersten Start meldet sich SmartScreen'
+            '(*Weitere Informationen* -> *Trotzdem ausfuehren*). Hintergrund und die'
+            'compat-Variante fuer Systeme ohne aktuelle UCRT: siehe README.'
+          )
+
+          $notes -join "`n" | Out-File -FilePath 'notes.md' -Encoding utf8
+          "$hash  ChatNicer.exe ($size Bytes)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+          # Sonst uebernimmt der Step den Exit-Code des letzten nativen Aufrufs (git).
+          exit 0
+
+      - name: Release veroeffentlichen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Altes Release samt Tag abraeumen, damit "latest" danach wirklich auf
+          # diesen Commit zeigt - ein blosses Asset-Update wuerde den Tag auf dem
+          # alten Stand stehen lassen. Beim allerersten Lauf gibt es noch keines,
+          # deshalb wird die Existenz geprueft statt den Fehler zu schlucken.
+          gh release view latest --json tagName | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete latest --yes --cleanup-tag
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::Altes Release 'latest' konnte nicht entfernt werden"
+              exit 1
+            }
+          } else {
+            Write-Host "Kein bestehendes Release 'latest' - wird neu angelegt."
+          }
+
+          gh release create latest `
+            'dist/ChatNicer.exe' `
+            --target $env:GITHUB_SHA `
+            --title 'ChatNicer - letzter Stand auf main' `
+            --notes-file notes.md `
+            --prerelease
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Release konnte nicht erstellt werden"
+            exit 1
+          }
+
+          Write-Host "Veroeffentlicht: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/latest"

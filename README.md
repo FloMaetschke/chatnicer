@@ -155,6 +155,8 @@ korrigiert.
 | `network.h` | WinHTTP, Ollama-API, JSON-Erzeugung und -Auswertung, Streaming-Filter |
 | `ChatNicer.sln` / `.vcxproj` | Visual-Studio-2022-Projekt (x64, Debug + Release) |
 | `build.bat` | Build ohne IDE – sucht die VS-Buildtools selbstständig |
+| `CHANGELOG.md` | Änderungen, nach Datum und Commit gegliedert |
+| `LICENSE` | MIT-Lizenz |
 
 Die Icons werden zur Laufzeit gezeichnet, deshalb gibt es **keine `.rc`-Datei**.
 
@@ -475,3 +477,17 @@ Zu den beiden neuen Schaltern geprüft:
 * Nicht automatisiert prüfbar war die Sichtbarkeit der Sprechblase selbst – sie
   ließ sich über UIAutomation nicht abgreifen (gilt für alle Tray-Meldungen der
   App gleichermaßen)
+
+---
+
+## Änderungen
+
+Was sich wann geändert hat, steht im [CHANGELOG.md](CHANGELOG.md). Versionsnummern
+gibt es noch keine – jeder Push auf `main` ersetzt das rollende Prerelease `latest`.
+
+---
+
+## Lizenz
+
+[MIT](LICENSE) – © 2026 Florian Maetschke. Die Software wird ohne Gewähr
+bereitgestellt; der Lizenztext ist maßgeblich.

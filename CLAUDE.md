@@ -30,7 +30,7 @@ Die Meldung „vswhere.exe … konnte nicht gefunden werden" stammt aus
 ### CI (`.github/workflows/build.yml`)
 
 Bei Push auf `main`, bei jedem Pull Request und von Hand (`workflow_dispatch`)
-laufen zwei Jobs auf `windows-latest`:
+laufen zwei Build-Jobs auf `windows-latest`:
 
 - **`build.bat` (Standard + compat)** – derselbe Weg wie lokal (`build.bat` findet
   die vorinstallierten VC++-Tools über vswhere selbst), danach Größenprüfung gegen
@@ -46,6 +46,26 @@ je verschoben, muss sie dort mit. Für die compat-Variante ist die Prüfung übe
 `ENFORCE_COMPAT_BUDGET: 'false'` auf eine Warnung gedämpft, weil sie derzeit
 bewusst 10.752 B darüber liegt (siehe unten); sobald sie wieder unter das Budget
 kommt, gehört der Schalter auf `'true'`.
+
+**Jeder Push auf `main` veröffentlicht.** Ein dritter Job hängt `ChatNicer.exe` an
+das rollende Prerelease `latest` – Tag und Assets werden dabei ersetzt, die
+Release-Notes enthalten Commit, Größe und SHA256 (das README verweist darauf, die
+EXE ist unsigniert). Punkte, die daran hängen:
+
+- Der Job läuft **nur nach beiden grünen Build-Jobs** (`needs`) und nur bei
+  `push` auf `main` – ein Fork-PR bekommt so nie `contents: write` in die Hand.
+- **`cancel-in-progress` ist auf `main` abgeschaltet.** Wird ein Lauf zwischen
+  `gh release delete --cleanup-tag` und `gh release create` abgeschossen, steht das
+  Repo ohne `latest` da. PR-Läufe dürfen sich weiter gegenseitig ersetzen.
+- Gelöscht **und** neu erstellt wird bewusst: ein bloßes Asset-Update ließe den Tag
+  `latest` auf dem alten Commit stehen.
+- Der Commit-Titel kommt aus `git log`, nicht aus `github.event.head_commit.message` –
+  eine Commit-Message in den Skripttext zu interpolieren ist der klassische Weg,
+  sich Fremdcode in den Runner zu holen.
+- Die compat-Variante wird **nicht** veröffentlicht; sie liegt nur im Build-Artefakt.
+
+Wer stattdessen versionierte Releases will, hängt den Job an `push: tags: ['v*']`
+und ersetzt den festen Tag `latest` durch `github.ref_name`.
 
 **Läuft ChatNicer noch, scheitert der Link mit `LNK1104`.** Vor jedem Build:
 
