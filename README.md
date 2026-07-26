@@ -1,6 +1,6 @@
 # ChatNicer
 
-Ein sehr leichtgewichtiges Windows-Tray-Programm (**110 KB**, reines Win32 + WinHTTP):
+Ein sehr leichtgewichtiges Windows-Tray-Programm (**116 KB**, reines Win32 + WinHTTP):
 markierten Text per Hotkey an ein lokales **Ollama**-Modell schicken und die Antwort
 direkt an der Cursorposition wieder einfügen – oder sie live tippen lassen, während
 das Modell sie schreibt.
@@ -22,6 +22,34 @@ Mit einem 3B/4B-Modell dauert das rund **eine Sekunde**.
 
 Das Tray-Icon zeigt den Zustand: **blau** = bereit, **orange** = Modell arbeitet,
 **rot** = Fehler (mit Benachrichtigung im Klartext).
+
+### Warmup beim Start
+
+Ollama lädt ein Modell erst bei der ersten Anfrage in den Speicher – das kostet je
+nach Größe einige Sekunden, und zwar ausgerechnet dann, wenn jemand auf die Antwort
+wartet. ChatNicer nimmt das vorweg: gleich nach dem Start geht eine leere Anfrage an
+Ollama, die nur das Laden auslöst (`POST /api/generate` mit leerem `prompt`, kein
+einziges Token wird erzeugt).
+
+Solange das läuft, ist das Tray-Icon **orange** und der Tooltip meldet
+„*Modell* wird geladen …“. Danach:
+
+* **Erfolg:** Icon wieder blau, Benachrichtigung „qwen3:4b-instruct ist geladen und
+  bereit (4 s)“. Diese Meldung lässt sich in den Einstellungen abschalten
+  (**„Benachrichtigen, wenn das Modell beim Start geladen ist"**); der Warmup läuft
+  dann still weiter.
+* **Fehler** (Ollama läuft nicht, Modell nicht installiert): Icon kurz rot,
+  Benachrichtigung mit dem Klartext-Grund. Fehler werden **immer** gemeldet, auch
+  bei abgeschalteter Erfolgsmeldung – sonst fiele ein nicht laufendes Ollama erst
+  beim ersten Hotkey auf. Das Programm läuft normal weiter.
+
+Der Hotkey ist währenddessen **nicht** gesperrt: Wer sofort loslegt, wird von Ollama
+einfach hinter den Ladevorgang gereiht. Wie lange das Modell danach im Speicher
+bleibt, entscheidet Ollama selbst (Standard 5 Minuten, einstellbar über
+`OLLAMA_KEEP_ALIVE`) – ChatNicer redet da nicht hinein.
+
+Beim allerersten Start ohne `config.ini` entfällt der Warmup, weil das Modell dort
+erst im Einstellungsdialog festgelegt wird.
 
 ### Tippmodus (optional)
 
@@ -60,6 +88,64 @@ Zur Modellwahl siehe unten; wichtig ist die Endung `-instruct`.
 
 ---
 
+## Erster Start & Windows-Warnungen
+
+**ChatNicer wird unsigniert ausgeliefert.** Ein Code-Signing-Zertifikat kostet
+mehrere hundert Euro im Jahr und muss jährlich erneuert werden – für ein Werkzeug
+dieser Größe steht das in keinem Verhältnis. Stattdessen liegt der vollständige
+Quellcode hier im Repo, und zu jedem Release gibt es den SHA256-Hash der EXE.
+
+Das hat zwei sichtbare Folgen.
+
+### SmartScreen
+
+Beim ersten Start meldet Windows „**Der Computer wurde durch Windows geschützt**".
+Der Knopf zum Fortfahren ist versteckt:
+
+> **Weitere Informationen** → **Trotzdem ausführen**
+
+Wurde die Datei aus dem Browser geladen, hängt außerdem ein „Mark of the Web" an
+ihr – auch dann, wenn sie aus einem ZIP entpackt wurde. Entfernen lässt es sich
+über Rechtsklick → *Eigenschaften* → *Zulassen*, oder in PowerShell:
+
+```powershell
+Unblock-File .\ChatNicer.exe
+```
+
+### Download prüfen
+
+`build.bat` gibt den SHA256 der frisch gebauten EXE aus, derselbe Wert steht in
+den Release-Notes. Nachrechnen:
+
+```powershell
+Get-FileHash .\ChatNicer.exe -Algorithm SHA256
+```
+
+Stimmt der Hash nicht mit dem Release überein, stammt die Datei nicht aus diesem
+Repo. Wer ganz sichergehen will, baut selbst – `build.bat` braucht nichts außer
+den VS-Buildtools.
+
+### Wenn der Virenscanner anschlägt
+
+Damit ist zu rechnen, und der Grund ist nachvollziehbar: ChatNicer registriert
+einen globalen Hotkey, liest die Zwischenablage, erzeugt synthetische
+Tastendrücke per `SendInput` und schickt Text über HTTP hinaus. Das ist Zug um
+Zug dasselbe Verhaltensprofil wie ein Keylogger – bei einer kleinen, unsignierten
+und unbekannten EXE reicht das manchen Heuristiken bereits.
+
+Was ChatNicer tatsächlich tut, steht in [`network.h`](network.h): Das einzige
+Ziel jeder Anfrage ist die konfigurierte `OllamaUrl`, standardmäßig
+`http://localhost:11434`. Es gibt keine Telemetrie, keinen Update-Check und keine
+zweite Gegenstelle. Mitgelesen wird ausschließlich das, was der Nutzer selbst
+markiert und per Hotkey abschickt.
+
+Ein Fehlalarm lässt sich bei Microsoft über die Einsendung zur Sicherheitsanalyse
+melden (`https://www.microsoft.com/wdsi/filesubmission`); die
+Defender-Definitionen werden danach üblicherweise binnen ein bis zwei Tagen
+korrigiert.
+
+---
+
 ## Dateien
 
 | Datei | Inhalt |
@@ -81,8 +167,8 @@ Die Icons werden zur Laufzeit gezeichnet, deshalb gibt es **keine `.rc`-Datei**.
 **Ohne IDE:**
 
 ```bat
-build.bat            :: Standard, 110 KB -> build\ChatNicer.exe
-build.bat compat     :: komplett statische CRT inkl. Exceptions (203 KB)
+build.bat            :: Standard, 116 KB -> build\ChatNicer.exe
+build.bat compat     :: komplett statische CRT inkl. Exceptions (211 KB)
 ```
 
 ### Warum die EXE so klein ist
@@ -93,12 +179,12 @@ Tabelle). Gemessen mit VS 2022 / Windows SDK 10.0.26100:
 
 | Variante | Größe | Laufzeitabhängigkeit |
 |---|---:|---|
-| statische CRT + Exceptions (`build.bat compat`) | 207.872 B | keine |
-| **Standard-Release** | **112.128 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
-| dynamische CRT (`/MD`) | 97.280 B | VC++-Redistributable erforderlich |
+| statische CRT + Exceptions (`build.bat compat`) | 215.552 B | keine |
+| **Standard-Release** | **118.272 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
+| dynamische CRT (`/MD`) | 106.496 B | VC++-Redistributable erforderlich |
 
-Der Standard-Release hat rund 92 KB Reserve. Die compat-Variante liegt aktuell
-3 KB über dem Budget – sie ist funktionsfähig, aber eben kein 200-KB-Build mehr.
+Der Standard-Release hat rund 84 KB Reserve. Die compat-Variante liegt aktuell
+10,5 KB über dem Budget – sie ist funktionsfähig, aber eben kein 200-KB-Build mehr.
 Wer sie schlank braucht, kann den Standard-Prompt aus dem Programm auslagern; er
 allein macht rund 3 KB der EXE aus.
 
@@ -134,8 +220,18 @@ Temperature=0.2                ; niedrig = weniger Abschweifen
 Hotkey=CTRL+SHIFT+SPACE
 RestoreClipboard=1
 TypingInput=0                  ; 1 = Antwort live tippen statt einfügen
+WarmupNotify=1                 ; 0 = keine Erfolgsmeldung nach dem Start-Warmup
 TimeoutMs=120000
 ```
+
+**Der Autostart steht bewusst nicht in dieser Datei.** Die Checkbox **„Mit Windows
+automatisch starten"** schreibt bzw. löscht den Wert `ChatNicer` unter
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` – dort, wo Windows ihn liest.
+Ein zweiter Wert in der `config.ini` könnte davon abweichen, etwa wenn der Eintrag
+im Task-Manager unter „Autostart" deaktiviert wird; die Checkbox zeigt deshalb bei
+jedem Öffnen den echten Registry-Zustand. Verwendet wird `HKEY_CURRENT_USER`, also
+sind keine Administratorrechte nötig. Wird die EXE verschoben, genügt einmal
+Speichern mit gesetzter Checkbox – der Pfad wird dabei neu geschrieben.
 
 **Hotkey-Schreibweise:** `CTRL`/`STRG`, `SHIFT`, `ALT`, `WIN` plus eine Taste
 (`A`–`Z`, `0`–`9`, `F1`–`F24`, `SPACE`, `ENTER`, `TAB`, `HOME`, …),
@@ -305,7 +401,9 @@ lässt sich ein Abbruch nicht mehr rückgängig machen; die Meldung lautet dann
 * **Release ohne C++-Exceptions** (`_HAS_EXCEPTIONS=0`): Bei Speichermangel bricht
   die STL hart ab. Wer das nicht möchte, baut mit `build.bat compat`.
 
-**Autostart:** `Win + R` → `shell:startup` → Verknüpfung auf `ChatNicer.exe` hineinlegen.
+**Autostart:** Einstellungen → **„Mit Windows automatisch starten"**. Wer es lieber
+von Hand macht: `Win + R` → `shell:startup` → Verknüpfung auf `ChatNicer.exe`
+hineinlegen (dann bleibt die Checkbox leer – sie kennt nur den Registry-Eintrag).
 
 ---
 
@@ -313,7 +411,7 @@ lässt sich ein Abbruch nicht mehr rückgängig machen; die Meldung lautet dann
 
 Auf Windows 11 (Build 26200), VS 2022, Ollama 0.21.2 gebaut und geprüft:
 
-* Release-Build fehlerfrei bei `/W4`, 110 KB (112.128 Bytes) – über `build.bat` und MSBuild
+* Release-Build fehlerfrei bei `/W4`, 116 KB (118.272 Bytes) – über `build.bat` und MSBuild
 * 43 automatisierte Tests, davon der Großteil live gegen das lokale Ollama:
   JSON-Erzeugung, XML-Extraktion inklusive aller real beobachteten kaputten
   Tag-Schreibweisen, Denkprozess-Filter, `config.ini`-Roundtrip mit Umlauten,
@@ -353,3 +451,27 @@ Zum Tippmodus zusätzlich geprüft:
   ganzen Zeitraum – Umlaute korrekt
 * Einfügemodus im selben Aufbau erneut geprüft: unverändert 5 Tastendrücke
   (STRG+C, STRG+V), Antwort nach 750 ms ersetzt
+
+Zum Warmup zusätzlich geprüft:
+
+* `POST /api/generate` mit leerem `prompt` von Hand gegen Ollama 0.21.2:
+  `done_reason=load`, `response` leer, 4,2 s bei kaltem `qwen3:4b-instruct`
+* Modell mit `ollama stop` entladen, ChatNicer gestartet: `ollama ps` zeigt das
+  Modell 12 s später wieder geladen – der Warmup feuert also tatsächlich
+* Fehlerfall mit einem nicht installierten Modell (`gibtsnicht:1b`): ChatNicer
+  läuft normal weiter, meldet den Grund und bleibt bedienbar
+* Erfolgsmeldung abgeschaltet (`WarmupNotify=0`): das Modell wird trotzdem
+  geladen – `ollama ps` zeigt es 12 s nach dem Start
+
+Zu den beiden neuen Schaltern geprüft:
+
+* Autostart einschalten und speichern → `HKCU\…\Run\ChatNicer` enthält
+  `"D:\chat-nicer\build\ChatNicer.exe"` inklusive Anführungszeichen; ausschalten
+  entfernt den Wert wieder
+* Eintrag von außen gelöscht (wie es der Task-Manager tut): der Dialog zeigt beim
+  nächsten Öffnen wieder „aus", ohne dass die `config.ini` etwas davon weiß
+* Beide Checkboxen im Dialog per `BM_GETCHECK` gegen den tatsächlichen Zustand
+  geprüft; das Fenster wächst korrekt auf 583 px Höhe mit
+* Nicht automatisiert prüfbar war die Sichtbarkeit der Sprechblase selbst – sie
+  ließ sich über UIAutomation nicht abgreifen (gilt für alle Tray-Meldungen der
+  App gleichermaßen)

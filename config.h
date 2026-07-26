@@ -94,6 +94,10 @@ struct Config {
     // Tastatureingabe schicken, statt sie fertig ueber die Zwischenablage
     // einzufuegen. Sichtbar wie im Ollama-Chat, dafuer nicht zurueckzunehmen.
     bool         typingInput = false;
+    // Erfolgsmeldung des Start-Warmups ("Modell ist geladen und bereit"). Fehler
+    // werden unabhaengig davon immer gemeldet - sonst bliebe ein nicht laufendes
+    // Ollama unbemerkt, bis der erste Hotkey ins Leere geht.
+    bool         warmupNotify = true;
     DWORD        timeoutMs  = 120000;        // lokale Modelle brauchen oft 10-30 s
 };
 
@@ -201,6 +205,59 @@ inline std::wstring ReadIni(const wchar_t* key, const wchar_t* def, const std::w
         cap *= 4;
     }
     return UnescapeIni(buf);
+}
+
+// -------------------------------------------------------------------------------------
+// Autostart (HKCU\...\Run)
+//
+// Bewusst NICHT in der config.ini: Windows liest den Schluessel, also ist die
+// Registry die Wahrheit. Ein zweiter Wert in der INI koennte davon abweichen -
+// etwa wenn jemand den Eintrag im Task-Manager unter "Autostart" deaktiviert.
+// Die Checkbox im Dialog zeigt deshalb immer den echten Registry-Zustand.
+//
+// HKEY_CURRENT_USER, nicht HKLM: kein Administrator noetig, und der Autostart
+// gilt fuer den Nutzer, dessen Hotkey ChatNicer bedient.
+// -------------------------------------------------------------------------------------
+static const wchar_t* kRunKey  = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+static const wchar_t* kRunName = L"ChatNicer";
+
+inline std::wstring ExePath() {
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    return exe;
+}
+
+inline bool AutostartEnabled() {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+        return false;
+    const LONG r = RegQueryValueExW(key, kRunName, nullptr, nullptr, nullptr, nullptr);
+    RegCloseKey(key);
+    return r == ERROR_SUCCESS;
+}
+
+// Beim Einschalten wird der Pfad immer neu geschrieben - so heilt sich ein
+// Eintrag, der auf eine inzwischen verschobene EXE zeigt, von selbst.
+// Anfuehrungszeichen sind Pflicht: ohne sie zerlegt Windows einen Pfad mit
+// Leerzeichen ("C:\Program Files\...") in Programm plus Argumente.
+inline bool SetAutostart(bool on) {
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0,
+                        KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+        return false;
+
+    LONG r;
+    if (on) {
+        const std::wstring val = L"\"" + ExePath() + L"\"";
+        r = RegSetValueExW(key, kRunName, 0, REG_SZ,
+                           reinterpret_cast<const BYTE*>(val.c_str()),
+                           static_cast<DWORD>((val.size() + 1) * sizeof(wchar_t)));
+    } else {
+        r = RegDeleteValueW(key, kRunName);
+        if (r == ERROR_FILE_NOT_FOUND) r = ERROR_SUCCESS;   // war schon aus
+    }
+    RegCloseKey(key);
+    return r == ERROR_SUCCESS;
 }
 
 // -------------------------------------------------------------------------------------
@@ -322,6 +379,7 @@ inline void Load(Config& c) {
 
     c.restoreClipboard = GetPrivateProfileIntW(L"ChatNicer", L"RestoreClipboard", 1, f.c_str()) != 0;
     c.typingInput      = GetPrivateProfileIntW(L"ChatNicer", L"TypingInput",      0, f.c_str()) != 0;
+    c.warmupNotify     = GetPrivateProfileIntW(L"ChatNicer", L"WarmupNotify",     1, f.c_str()) != 0;
 
     DWORD t = GetPrivateProfileIntW(L"ChatNicer", L"TimeoutMs", 120000, f.c_str());
     c.timeoutMs = (t < 1000) ? 1000 : (t > 600000 ? 600000 : t);
@@ -344,6 +402,7 @@ inline bool Save(const Config& c) {
     ok &= put(L"Hotkey",       HotkeyToString(c.hotkeyMods, c.hotkeyVk));
     ok &= put(L"RestoreClipboard", c.restoreClipboard ? L"1" : L"0");
     ok &= put(L"TypingInput",      c.typingInput      ? L"1" : L"0");
+    ok &= put(L"WarmupNotify",     c.warmupNotify     ? L"1" : L"0");
 
     wchar_t num[16];
     wsprintfW(num, L"%u", c.timeoutMs);

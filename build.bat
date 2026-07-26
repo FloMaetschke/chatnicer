@@ -60,7 +60,7 @@ cl /nologo /std:c++17 /permissive- /W4 /MT /utf-8 %CLEXTRA% ^
    /Fobuild\ /Fdbuild\ main.cpp ^
    /link /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO /SUBSYSTEM:WINDOWS /RELEASE ^
    /MANIFEST:EMBED %LINKEXTRA% /OUT:build\%OUTNAME% ^
-   user32.lib gdi32.lib shell32.lib comctl32.lib winhttp.lib
+   user32.lib gdi32.lib shell32.lib comctl32.lib winhttp.lib advapi32.lib
 
 if errorlevel 1 (
     echo.
@@ -70,4 +70,13 @@ if errorlevel 1 (
 
 echo.
 for %%F in (build\%OUTNAME%) do echo === Fertig: %%~fF  ^(%%~zF Bytes^) ===
+
+REM --- SHA256 -------------------------------------------------------------------------
+REM  Die EXE wird unsigniert ausgeliefert; der Hash gehoert deshalb in die Release-Notes
+REM  und ist fuer den Nutzer der einzige Weg, den Download gegen das Repo zu pruefen.
+set "SHA256="
+for /f "skip=1 tokens=*" %%H in ('certutil -hashfile "build\%OUTNAME%" SHA256') do (
+    if not defined SHA256 set "SHA256=%%H"
+)
+echo === SHA256: %SHA256%
 endlocal

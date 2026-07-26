@@ -921,6 +921,31 @@ inline Result ChatStream(const std::wstring& baseUrl, const std::wstring& bearer
     return r;
 }
 
+// Laedt das Modell in den Speicher, ohne Text erzeugen zu lassen (Start-Warmup).
+//
+// POST /api/generate mit leerem "prompt" ist der dafuer vorgesehene Weg: Ollama
+// laedt das Modell und antwortet sofort mit "done":true, ohne ein einziges Token.
+// Bewusst nicht /api/chat - das braeuchte eine Nachricht und wuerde eine echte
+// Antwort erzeugen, also Zeit kosten, die niemand liest.
+//
+// "keep_alive" wird nicht gesetzt: Ollamas Standard (bzw. ein per
+// OLLAMA_KEEP_ALIVE konfigurierter Wert) soll gelten, sonst wuerde ChatNicer
+// fremde Einstellungen ueberschreiben.
+inline Result Warmup(const std::wstring& baseUrl, const std::wstring& bearer,
+                     const std::wstring& model, DWORD timeoutMs) {
+    Result r;
+    if (Trim(model).empty()) {
+        r.error = L"Kein Modell konfiguriert (z. B. llama3.2:3b).";
+        return r;
+    }
+    // Ein fehlendes Modell meldet Ollama mit 404 und {"error":"model ... not found"};
+    // Request() reicht das bereits als r.error durch.
+    const std::wstring payload =
+        L"{\"model\":\"" + JsonEscape(Trim(model)) + L"\",\"prompt\":\"\",\"stream\":false}";
+    return Request(BuildEndpoint(baseUrl, L"/api/generate"), L"POST", bearer,
+                   ToUtf8(payload), timeoutMs);
+}
+
 // Liest die installierten Modelle (GET /api/tags).
 inline std::vector<std::wstring> FetchModels(const std::wstring& baseUrl,
                                              const std::wstring& bearer) {

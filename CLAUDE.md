@@ -13,8 +13,8 @@ stehen im [README.md](README.md).
 ## Build
 
 ```bat
-build.bat            :: Standard-Release -> build\ChatNicer.exe (112.128 B)
-build.bat compat     :: statische CRT inkl. Exceptions (207.872 B)
+build.bat            :: Standard-Release -> build\ChatNicer.exe (118.272 B)
+build.bat compat     :: statische CRT inkl. Exceptions (215.552 B)
 ```
 
 Alternativ MSBuild (liefert dieselbe EXE nach `build\Release\`):
@@ -30,13 +30,22 @@ Die Meldung „vswhere.exe … konnte nicht gefunden werden" stammt aus
 **Läuft ChatNicer noch, scheitert der Link mit `LNK1104`.** Vor jedem Build:
 
 ```powershell
-Get-Process ChatNicer -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process ChatNicer,ChatNicer-compat -ErrorAction SilentlyContinue | Stop-Process -Force
 ```
+
+Die compat-Variante **muss** dabei stehen: sie heißt im Prozessbaum
+`ChatNicer-compat`, `Get-Process ChatNicer` erwischt sie also nicht. Beide teilen
+sich aber denselben Single-Instance-Mutex – eine übersehene compat-Instanz lässt
+die frisch gebaute EXE kommentarlos wieder aussteigen, und man testet weiter den
+alten Stand. Das Fehlerbild ist tückisch: der Dialog öffnet sich normal, nur die
+neuen Bedienelemente fehlen. Wer unsicher ist, prüft, wem das Fenster gehört:
+`GetWindowThreadProcessId(FindWindowW("ChatNicerSettingsWnd", …))` → PID →
+`Get-CimInstance Win32_Process`.
 
 ## Harte Randbedingungen
 
-**Größenbudget < 200 KB** (204.800 Bytes). Standard-Release aktuell 112.128 Bytes
-– rund 92 KB Reserve; die compat-Variante liegt derzeit darüber (siehe unten). Erreicht wird das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`
+**Größenbudget < 200 KB** (204.800 Bytes). Standard-Release aktuell 118.272 Bytes
+– rund 84 KB Reserve; die compat-Variante liegt derzeit darüber (siehe unten). Erreicht wird das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`
 (vcruntime statisch, UCRT dynamisch – `ucrtbase.dll` gehört ab Windows 10 zum
 System, deshalb kein VC++-Redist), dazu `/O1 /Os`, `/GL`+`/LTCG`, `/GR-`, `/GS-`,
 `/OPT:REF /OPT:ICF` und abgeschaltete Exceptions. Nach Änderungen die Größe
@@ -50,11 +59,13 @@ bleibt trotzdem das Ziel: eingebunden sind weiterhin nur `<string>` und
 jetzt zwar hinein, `<regex>` allein frisst aber einen Großteil des neuen
 Spielraums – im Zweifel von Hand parsen, so wie es `network.h` schon tut.
 
-**`build.bat compat` reißt das Budget derzeit: 207.872 B bei 204.800 B erlaubt –
-3.072 B zu viel.** Aufgelaufen ist das in zwei Schritten: die Emoji-Regel im
+**`build.bat compat` reißt das Budget derzeit: 215.552 B bei 204.800 B erlaubt –
+10.752 B zu viel.** Aufgelaufen ist das in vier Schritten: die Emoji-Regel im
 Standard-Prompt hat die Variante exakt auf die Grenze gesetzt, die tolerante
-Rahmen-Erkennung (`IsFrameTagName` & Co.) hat sie darüber geschoben. Der
-Standard-Release ist davon unberührt (112.128 B, rund 92 KB Reserve).
+Rahmen-Erkennung (`IsFrameTagName` & Co.) hat sie darüber geschoben, der
+Start-Warmup (`net::Warmup` + `WarmupProc`) noch einmal um 4.608 B, die beiden
+Schalter (Warmup-Meldung, Autostart) um weitere 3.072 B. Der Standard-Release ist
+davon unberührt (118.272 B, rund 84 KB Reserve).
 
 Wer das zurückholen will, hat drei Hebel:
 
@@ -76,7 +87,7 @@ zurückgebaut werden sollten: `Chat()`/`ChatStream()` teilen sich `ChatCore()`,
 `TagStream::Feed`/`Flush` hängen an einen Ausgabeparameter an statt einen String
 zurückzugeben, und `TrimLeftIn`/`TrimRightIn` ersetzen vier gleiche Schleifen.
 Wer hier etwas hinzufügt, misst **beide** Varianten – der Standard-Release hat
-93 KB Reserve und merkt nichts davon.
+84 KB Reserve und merkt nichts davon.
 
 **`/utf-8` ist Pflicht** (in `build.bat` und `vcxproj`): Der Standard-System-Prompt
 in `config.h` enthält echte Umlaute. Ohne das Flag werden sie falsch kodiert.
@@ -96,7 +107,7 @@ kommt über ein `#pragma comment(linker, "/manifestdependency:…")`.
 ### Threading
 
 Der UI-Thread besitzt alle Fenster. Netzwerkarbeit läuft in kurzlebigen Threads
-(`WorkerProc`, `TestProc`, `ModelsProc`). Regeln, die durchgehend gelten:
+(`WorkerProc`, `TestProc`, `ModelsProc`, `WarmupProc`). Regeln, die durchgehend gelten:
 
 - Jeder Thread bekommt eine **Heap-Kopie der Config** (`new cfg::Config(g_cfg)`)
   und löscht sie selbst. Dadurch keine Locks und keine Races mit dem Dialog.
@@ -196,6 +207,58 @@ gekostet haben:
   aber ohne Denkphase (Qwen3-4B-Instruct-2507): 1–4 s statt 14–27 s. Ein
   `qwen3:14b-instruct` gibt es in der Ollama-Library nicht, nur `4b` und `30b`.
 
+### Start-Warmup (`net::Warmup`, `WarmupProc`)
+
+Direkt nach `TrayAdd()` lädt `StartWarmup()` das Modell in Ollamas Speicher, damit
+die erste echte Anfrage nicht auf den Modellstart wartet (kalt real gemessen:
+4,2 s für `qwen3:4b-instruct`). Vier Entscheidungen dahinter:
+
+- **`POST /api/generate` mit leerem `"prompt"`**, nicht `/api/chat`. Ollama lädt
+  das Modell und antwortet sofort mit `"done":true`, `"done_reason":"load"` und
+  leerem `response` – kein einziges Token wird erzeugt. Über `/api/chat` bräuchte
+  es eine echte Nachricht und damit eine echte Antwortzeit.
+- **Kein `keep_alive` im Payload.** Wie lange das Modell geladen bleibt, gehört
+  Ollama (Standard 5 min bzw. `OLLAMA_KEEP_ALIVE`); ein eigener Wert würde eine
+  bewusste Nutzereinstellung überschreiben.
+- **Kein `g_busy`.** Der Warmup sperrt den Hotkey nicht – Ollama reiht parallele
+  Anfragen selbst auf. Umgekehrt heißt das: der Handler für `WM_APP_WARMUP` darf
+  das Tray-Icon nur anfassen, wenn `g_busy == 0`, sonst überschreibt ein spät
+  eintreffendes Warmup-Ergebnis den Zustand eines laufenden Durchlaufs.
+- **Nicht beim Erststart.** Fehlt die `config.ini`, öffnet sich stattdessen der
+  Einstellungsdialog; das Modell steht dort erst danach fest.
+
+Gemeldet wird über das Tray-Icon: orange + „… wird geladen …" während des Laufs,
+danach blau mit Erfolgs-Ballon oder rot mit dem Klartextfehler (Icon-Reset über
+denselben Timer 1 wie bei `WM_APP_DONE`).
+
+`Config::warmupNotify` (Checkbox `IDC_WARMMSG`, INI-Schlüssel `WarmupNotify`)
+schaltet **nur die Erfolgsmeldung** ab – der Fehler-Ballon hängt bewusst nicht
+daran (`if (!ok || g_cfg.warmupNotify)`). Sonst bliebe ein nicht laufendes Ollama
+still, bis der erste Hotkey ins Leere geht, und genau dann steht der Nutzer vor
+einem Programm, das „nichts tut".
+
+### Autostart (`cfg::AutostartEnabled` / `cfg::SetAutostart`)
+
+Checkbox `IDC_AUTOSTART` schreibt `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`,
+Wert `ChatNicer`. Bewusst **nicht** zusätzlich in der `config.ini`: Windows liest
+die Registry, sie ist die Wahrheit. Ein gespiegelter INI-Wert würde auseinander­
+laufen, sobald jemand den Eintrag im Task-Manager unter „Autostart" deaktiviert.
+Der Dialog liest den Zustand deshalb bei jedem Öffnen frisch aus der Registry, und
+`ApplySettings()` fasst sie nur an, wenn Checkbox und Ist-Zustand voneinander
+abweichen.
+
+Drei Details, die leicht verloren gehen:
+
+- **Der Pfad steht in Anführungszeichen.** Ohne sie zerlegt Windows einen Pfad mit
+  Leerzeichen (`C:\Program Files\…`) in Programm plus Argumente.
+- **Beim Einschalten wird immer neu geschrieben**, auch wenn der Wert schon da war
+  – so heilt sich ein Eintrag, der auf eine verschobene EXE zeigt.
+- **`advapi32.lib` ist seitdem Pflicht** (in `build.bat`, `vcxproj` und als
+  `#pragma comment(lib, …)` in `main.cpp`, damit auch ein Konsolentreiber linkt).
+
+Schlägt der Registry-Zugriff fehl, meldet der Dialog das, **speichert die übrigen
+Einstellungen aber trotzdem** und setzt die Checkbox auf den echten Zustand zurück.
+
 ### Streaming (`ChatStream`, nur im Tippmodus)
 
 Dieselbe Anfrage mit `"stream": true`. Ollama antwortet dann mit NDJSON – eine
@@ -263,7 +326,7 @@ Ollama laufen lassen:
 
 ```bat
 cl /nologo /std:c++17 /EHsc /MD /utf-8 /I d:\chat-nicer selftest.cpp ^
-   /link winhttp.lib user32.lib
+   /link winhttp.lib user32.lib advapi32.lib
 ```
 
 Schnellprüfung der API von Hand:
@@ -293,3 +356,17 @@ Verlauf über die Zeitstempel der einzelnen `KeyPress`/`WM_CHAR`-Ereignisse.
 Fallstrick bei PowerShell-Testskripten: `$null` wird an `string`-Parameter von
 P/Invoke als `""` gebunden, `FindWindowW(cls, $null)` sucht dann ein Fenster mit
 leerem Titel und findet nichts. `[NullString]::Value` verwenden.
+
+Der **Einstellungsdialog lässt sich vollständig fernsteuern**, ohne Fokusprobleme:
+`PostMessage(g_hwnd, WM_COMMAND, 40001, 0)` öffnet ihn (`IDM_SETTINGS`), `BM_CLICK`
+(0x00F5) schaltet eine Checkbox, `BM_GETCHECK` (0x00F0) liest sie, und
+`SendMessage(dlg, WM_COMMAND, 1011, 0)` speichert (`IDC_SAVE`). So lassen sich
+Checkbox-Zustände und ihre Wirkung auf `config.ini`/Registry prüfen. Die Control-IDs
+stehen im `IDC_*`-Enum in `main.cpp` – sie verschieben sich, sobald jemand einen
+Eintrag einfügt, also nicht hart merken. Ein Screenshot des Dialogs gelingt mit
+`PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)`.
+
+**Tray-Ballons sind nicht automatisiert prüfbar.** Weder über UIAutomation
+(`Windows.UI.Core.CoreWindow` im Desktop-Baum) noch über die Fenstersuche taucht
+die Sprechblase auf. Wer eine Meldung verifizieren will, prüft ihre Nebenwirkungen
+(INI-Wert, Registry, `ollama ps`) statt der Anzeige.

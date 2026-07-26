@@ -9,12 +9,17 @@
 //  Konfiguriert werden nur Ollama-URL (Standard http://localhost:11434) und der
 //  Modellname in Ollama-Schreibweise (Standard qwen3:4b-instruct).
 //
+//  Beim Start laedt ChatNicer das Modell vorab in den Ollama-Speicher (Warmup,
+//  siehe WarmupProc/net::Warmup) und meldet das Ergebnis ueber das Tray-Icon.
+//  Der Autostart mit Windows haengt an HKCU\...\Run (cfg::SetAutostart), nicht an
+//  der config.ini - Windows liest die Registry, also ist sie die Wahrheit.
+//
 //  Keine externen Abhaengigkeiten: nur Win32 + WinHTTP (beides Teil von Windows).
 //
 // -------------------------------------------------------------------------------------
 //  BUILD (x64 Native Tools Command Prompt for VS 2022) - oder einfach: build.bat
 //
-//  Release, 112.128 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
+//  Release, 118.272 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
 //
 //    cl /nologo /std:c++17 /permissive- /W4 /MT /utf-8 /EHs-c- /D_HAS_EXCEPTIONS=0 ^
 //       /O1 /Os /Oi /Oy /Gy /Gw /GL /GR- /GS- /Zc:inline /Zc:threadSafeInit- ^
@@ -23,7 +28,7 @@
 //       /link /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO /SUBSYSTEM:WINDOWS /RELEASE ^
 //       /MANIFEST:EMBED /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib ^
 //       /OUT:ChatNicer.exe ^
-//       user32.lib gdi32.lib shell32.lib comctl32.lib winhttp.lib
+//       user32.lib gdi32.lib shell32.lib comctl32.lib winhttp.lib advapi32.lib
 //
 //  Bedeutung der wichtigsten Flags:
 //    /O1 /Os              Optimierung auf Codegroesse statt Geschwindigkeit
@@ -40,9 +45,9 @@
 //                         Windows 10 zum Betriebssystem -> KEIN VC++-Redist erforderlich.
 //
 //  Groessenvergleich derselben Quelle (gemessen):
-//    komplett statische CRT, mit Exceptions (/MT /EHsc) ... 207.872 B - maximal robust
-//    obige Release-Konfiguration .......................... 112.128 B - Standard
-//    dynamische CRT (/MD) .................................  97.280 B - braucht VC++-Redist
+//    komplett statische CRT, mit Exceptions (/MT /EHsc) ... 215.552 B - maximal robust
+//    obige Release-Konfiguration .......................... 118.272 B - Standard
+//    dynamische CRT (/MD) ................................. 106.496 B - braucht VC++-Redist
 //
 //  Hinweis zu _HAS_EXCEPTIONS=0: bei Speichermangel bricht die STL hart ab, statt
 //  std::bad_alloc zu werfen. Fuer ein Tool dieser Groesse akzeptabel - wer das nicht
@@ -80,6 +85,7 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "advapi32.lib")   // Registry: Autostart-Eintrag (cfg::SetAutostart)
 
 // Visual Styles ohne separate .rc-/.manifest-Datei
 #pragma comment(linker, "/manifestdependency:\"type='win32' "                          \
@@ -101,10 +107,12 @@ static const wchar_t* kMutexName  = L"Local\\ChatNicer_SingleInstance";
 #define WM_APP_DONE     (WM_APP + 3)   // wParam = ok?, lParam = std::wstring* (Meldung)
 #define WM_APP_TESTDONE (WM_APP + 4)   // lParam = std::wstring* (Testergebnis)
 #define WM_APP_MODELS   (WM_APP + 5)   // lParam = std::vector<std::wstring>* (Modelliste)
+#define WM_APP_WARMUP   (WM_APP + 6)   // wParam = ok?, lParam = std::wstring* (Meldung)
 
 enum { IDM_SETTINGS = 40001, IDM_ABOUT, IDM_EXIT };
 enum { IDC_URL = 1001, IDC_MODEL, IDC_PROMPT, IDC_KEY, IDC_HOTKEY,
-       IDC_TYPING, IDC_RESTORE, IDC_TEST, IDC_SAVE, IDC_CANCEL };
+       IDC_TYPING, IDC_RESTORE, IDC_WARMMSG, IDC_AUTOSTART,
+       IDC_TEST, IDC_SAVE, IDC_CANCEL };
 enum { HOTKEY_ID = 1 };
 
 enum TrayState { STATE_IDLE = 0, STATE_BUSY = 1, STATE_ERROR = 2 };
@@ -533,6 +541,49 @@ static void StartWork() {
 }
 
 // =====================================================================================
+//  Start-Warmup: das Modell vorab laden lassen
+//
+//  Ollama holt ein Modell erst bei der ersten Anfrage in den Speicher; je nach
+//  Groesse dauert das mehrere Sekunden, die sonst beim ersten Hotkey anfallen -
+//  also genau dann, wenn jemand auf die Antwort wartet. Der Lauf ist bewusst
+//  *nicht* ueber g_busy gesperrt: wer waehrenddessen den Hotkey drueckt, soll das
+//  duerfen (Ollama reiht die Anfragen selbst auf). Deshalb fasst der Handler das
+//  Icon nur an, wenn gerade keine echte Anfrage laeuft.
+// =====================================================================================
+static DWORD WINAPI WarmupProc(LPVOID param) {
+    cfg::Config* c = static_cast<cfg::Config*>(param);
+
+    const DWORD start = GetTickCount();
+    net::Result res = net::Warmup(c->ollamaUrl, c->apiKey, c->model, c->timeoutMs);
+    const DWORD secs = (GetTickCount() - start + 500) / 1000;
+
+    wchar_t tail[64];
+    wsprintfW(tail, L" ist geladen und bereit (%u s).", secs);
+    std::wstring msg = res.ok ? c->model + tail
+                              : L"Modell konnte nicht vorgeladen werden:\n" + res.error;
+
+    delete c;
+    PostMessageW(g_hwnd, WM_APP_WARMUP, res.ok ? 1 : 0,
+                 reinterpret_cast<LPARAM>(new std::wstring(msg)));
+    return 0;
+}
+
+static void StartWarmup() {
+    if (net::Trim(g_cfg.ollamaUrl).empty() || net::Trim(g_cfg.model).empty()) return;
+
+    TraySetState(STATE_BUSY,
+                 std::wstring(kAppName) + L"  -  " + g_cfg.model + L" wird geladen ...");
+
+    cfg::Config* snapshot = new cfg::Config(g_cfg);   // Kopie -> keine Races mit dem UI
+    if (HANDLE th = CreateThread(nullptr, 0, WarmupProc, snapshot, 0, nullptr)) {
+        CloseHandle(th);
+    } else {
+        delete snapshot;
+        TraySetState(STATE_IDLE, IdleTip());
+    }
+}
+
+// =====================================================================================
 //  Verbindungstest aus dem Einstellungsdialog
 // =====================================================================================
 static DWORD WINAPI TestProc(LPVOID param) {
@@ -666,7 +717,17 @@ static void BuildSettingsControls(HWND hwnd) {
                     S(LX), S(418), S(EW), S(20), hwnd,
                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RESTORE)), g_inst, nullptr);
 
-    const int BY = 454, BW = 110, BH = 28;
+    CreateWindowExW(0, L"BUTTON", L"Benachrichtigen, wenn das Modell beim Start geladen ist",
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                    S(LX), S(442), S(EW), S(20), hwnd,
+                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_WARMMSG)), g_inst, nullptr);
+
+    CreateWindowExW(0, L"BUTTON", L"Mit Windows automatisch starten",
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                    S(LX), S(466), S(EW), S(20), hwnd,
+                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_AUTOSTART)), g_inst, nullptr);
+
+    const int BY = 502, BW = 110, BH = 28;
     CreateWindowExW(0, L"BUTTON", L"Verbindung testen",
                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
                     S(LX), S(BY), S(130), S(BH), hwnd,
@@ -694,6 +755,9 @@ static void BuildSettingsControls(HWND hwnd) {
                    cfg::HotkeyToString(g_cfg.hotkeyMods, g_cfg.hotkeyVk).c_str());
     CheckDlgButton(hwnd, IDC_RESTORE, g_cfg.restoreClipboard ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwnd, IDC_TYPING,  g_cfg.typingInput      ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(hwnd, IDC_WARMMSG, g_cfg.warmupNotify     ? BST_CHECKED : BST_UNCHECKED);
+    // Autostart steht in der Registry, nicht in g_cfg - immer den echten Zustand zeigen.
+    CheckDlgButton(hwnd, IDC_AUTOSTART, cfg::AutostartEnabled() ? BST_CHECKED : BST_UNCHECKED);
 
     // installierte Modelle nebenher holen - blockiert den Dialog nicht
     RequestModelList(g_cfg.ollamaUrl, g_cfg.apiKey);
@@ -719,6 +783,7 @@ static bool ApplySettings(HWND hwnd) {
     next.systemPrompt= ToLf(GetText(GetDlgItem(hwnd, IDC_PROMPT)));
     next.restoreClipboard = IsDlgButtonChecked(hwnd, IDC_RESTORE) == BST_CHECKED;
     next.typingInput      = IsDlgButtonChecked(hwnd, IDC_TYPING)  == BST_CHECKED;
+    next.warmupNotify     = IsDlgButtonChecked(hwnd, IDC_WARMMSG) == BST_CHECKED;
 
     if (next.ollamaUrl.empty()) next.ollamaUrl = cfg::kDefaultUrl;
 
@@ -765,6 +830,25 @@ static bool ApplySettings(HWND hwnd) {
     }
     next.hotkeyMods = mods;
     next.hotkeyVk   = vk;
+
+    // Autostart landet in der Registry, nicht in der config.ini. Nur anfassen, wenn
+    // die Checkbox vom Ist-Zustand abweicht - sonst wuerde jedes Speichern den
+    // Wert neu schreiben, auch wenn niemand etwas daran geaendert hat.
+    const bool wantAuto = IsDlgButtonChecked(hwnd, IDC_AUTOSTART) == BST_CHECKED;
+    if (wantAuto != cfg::AutostartEnabled() && !cfg::SetAutostart(wantAuto)) {
+        MessageBoxW(hwnd, wantAuto
+                        ? L"Der Autostart konnte nicht eingetragen werden.\n\n"
+                          L"Windows hat den Registry-Zugriff auf\n"
+                          L"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run abgelehnt."
+                        : L"Der Autostart-Eintrag konnte nicht entfernt werden.\n\n"
+                          L"Windows hat den Registry-Zugriff auf\n"
+                          L"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run abgelehnt.",
+                    kAppName, MB_ICONWARNING | MB_OK);
+        CheckDlgButton(hwnd, IDC_AUTOSTART,
+                       cfg::AutostartEnabled() ? BST_CHECKED : BST_UNCHECKED);
+        // Bewusst kein return: die uebrigen Einstellungen sind gueltig und sollen
+        // gespeichert werden. Die Checkbox zeigt danach wieder den echten Zustand.
+    }
 
     g_cfg = next;
     if (!cfg::Save(g_cfg)) {
@@ -971,6 +1055,26 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
+    case WM_APP_WARMUP: {
+        std::wstring* msgText = reinterpret_cast<std::wstring*>(lp);
+        const bool ok = (wp != 0);
+        if (!g_busy) {                      // laeuft eine echte Anfrage, gehoert ihr das Icon
+            if (ok) {
+                TraySetState(STATE_IDLE, IdleTip());
+            } else {
+                TraySetState(STATE_ERROR, std::wstring(kAppName) + L"  -  Fehler");
+                SetTimer(hwnd, 1, 4000, nullptr);
+            }
+        }
+        // Die Erfolgsmeldung laesst sich abschalten (Checkbox im Dialog); ein Fehler
+        // wird immer gemeldet, sonst faellt ein nicht laufendes Ollama erst beim
+        // ersten Hotkey auf.
+        if (!ok || g_cfg.warmupNotify)
+            TrayBalloon(kAppName, msgText ? *msgText : L"", !ok);
+        delete msgText;
+        return 0;
+    }
+
     case WM_APP_MODELS: {
         std::vector<std::wstring>* list = reinterpret_cast<std::vector<std::wstring>*>(lp);
         if (list && g_settings) {
@@ -1082,6 +1186,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     // passen auf eine unveraenderte lokale Ollama-Installation.
     if (GetFileAttributesW(cfg::ConfigPath().c_str()) == INVALID_FILE_ATTRIBUTES) {
         OpenSettings();
+    } else {
+        // Konfiguriertes System: das Modell gleich laden lassen, damit der erste
+        // Hotkey nicht auf den Modellstart wartet. Beim Erststart hat das keinen
+        // Sinn - dort steht das Modell ja erst nach dem Dialog fest.
+        StartWarmup();
     }
 
     MSG msg;
