@@ -1,0 +1,143 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  #  Der Weg, den auch ein Entwickler lokal geht: build.bat, beide Varianten.
+  #  build.bat sucht sich die VS-Umgebung selbst (vswhere), auf dem Runner ist
+  #  VS 2022 mit den VC++-Tools vorinstalliert - kein Setup-Schritt noetig.
+  # ---------------------------------------------------------------------------
+  build:
+    name: build.bat (Standard + compat)
+    runs-on: windows-latest
+
+    env:
+      # Groessenbudget aus CLAUDE.md: 200 KB = 204.800 Bytes.
+      SIZE_BUDGET: '204800'
+      # Die compat-Variante liegt derzeit bewusst darueber (siehe CLAUDE.md,
+      # Abschnitt "Harte Randbedingungen"). Auf 'true' setzen, sobald sie wieder
+      # unter dem Budget liegt - dann bricht der Lauf statt nur zu warnen.
+      ENFORCE_COMPAT_BUDGET: 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Standard-Release bauen
+        shell: cmd
+        run: build.bat
+
+      - name: compat-Variante bauen
+        shell: cmd
+        run: build.bat compat
+
+      - name: Groesse gegen Budget pruefen
+        shell: pwsh
+        run: |
+          $budget = [int]$env:SIZE_BUDGET
+          $enforceCompat = $env:ENFORCE_COMPAT_BUDGET -eq 'true'
+          $failed = $false
+
+          $variants = @(
+            @{ File = 'build\ChatNicer.exe';        Enforce = $true },
+            @{ File = 'build\ChatNicer-compat.exe'; Enforce = $enforceCompat }
+          )
+
+          $rows = @()
+          foreach ($v in $variants) {
+            if (-not (Test-Path $v.File)) {
+              Write-Host "::error::$($v.File) wurde nicht erzeugt"
+              $failed = $true
+              continue
+            }
+
+            $name = Split-Path $v.File -Leaf
+            $size = (Get-Item $v.File).Length
+            $hash = (Get-FileHash $v.File -Algorithm SHA256).Hash
+
+            if ($size -gt $budget) {
+              $over = $size - $budget
+              $msg  = "$name : $size Bytes, $over Bytes ueber dem Budget von $budget Bytes"
+              if ($v.Enforce) {
+                Write-Host "::error::$msg"
+                $failed = $true
+                $status = 'ueber Budget'
+              } else {
+                Write-Host "::warning::$msg"
+                $status = 'ueber Budget (geduldet)'
+              }
+            } else {
+              $status = "ok ($($budget - $size) Bytes Reserve)"
+            }
+
+            Write-Host "$name : $size Bytes - $status"
+            Write-Host "  SHA256 $hash"
+            $rows += "| $name | $size | $budget | $status | $hash |"
+          }
+
+          $summary = @(
+            '### ChatNicer x64',
+            '',
+            '| Variante | Bytes | Budget | Status | SHA256 |',
+            '| --- | ---: | ---: | --- | --- |'
+          ) + $rows
+          $summary -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+          if ($failed) { exit 1 }
+
+      - name: Artefakte hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatNicer-x64
+          path: |
+            build/ChatNicer.exe
+            build/ChatNicer-compat.exe
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  #  Gegenprobe ueber die Solution. Zweck ist nicht die EXE, sondern dass
+  #  ChatNicer.vcxproj nicht verrottet: Flags und Bibliotheken stehen doppelt
+  #  (build.bat und vcxproj), und wer nur eine Seite pflegt, merkt es sonst erst,
+  #  wenn jemand aus der IDE heraus baut.
+  # ---------------------------------------------------------------------------
+  msbuild:
+    name: MSBuild-Gegenprobe (Release|x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: MSBuild bereitstellen
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Solution bauen
+        shell: cmd
+        run: msbuild ChatNicer.sln /nologo /m /p:Configuration=Release /p:Platform=x64
+
+      - name: Ergebnis pruefen
+        shell: pwsh
+        run: |
+          $exe = 'build\Release\ChatNicer.exe'
+          if (-not (Test-Path $exe)) {
+            Write-Host "::error::$exe wurde nicht erzeugt"
+            exit 1
+          }
+          $size = (Get-Item $exe).Length
+          Write-Host "MSBuild-Release: $size Bytes"
+          if ($size -gt 204800) {
+            Write-Host "::error::MSBuild-Release ueber dem Budget von 204800 Bytes"
+            exit 1
+          }

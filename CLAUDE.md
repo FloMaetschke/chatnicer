@@ -27,6 +27,26 @@ msbuild ChatNicer.sln /p:Configuration=Release /p:Platform=x64
 Die Meldung „vswhere.exe … konnte nicht gefunden werden" stammt aus
 `vcvars64.bat` selbst und ist harmlos.
 
+### CI (`.github/workflows/build.yml`)
+
+Bei Push auf `main`, bei jedem Pull Request und von Hand (`workflow_dispatch`)
+laufen zwei Jobs auf `windows-latest`:
+
+- **`build.bat` (Standard + compat)** – derselbe Weg wie lokal (`build.bat` findet
+  die vorinstallierten VC++-Tools über vswhere selbst), danach Größenprüfung gegen
+  das 200-KB-Budget und Upload beider EXEn als Artefakt `ChatNicer-x64`. Größen und
+  SHA256 stehen in der Job-Zusammenfassung.
+- **MSBuild-Gegenprobe** – baut `ChatNicer.sln`. Sie prüft nicht die EXE, sondern
+  dass `ChatNicer.vcxproj` nicht verrottet: Flags und Bibliotheken stehen doppelt,
+  und wer nur `build.bat` pflegt, merkt es sonst erst beim Bauen aus der IDE (so
+  ist `advapi32.lib` beinahe untergegangen).
+
+Das Budget steht als `SIZE_BUDGET` im Workflow – wird die Grenze in diesem Dokument
+je verschoben, muss sie dort mit. Für die compat-Variante ist die Prüfung über
+`ENFORCE_COMPAT_BUDGET: 'false'` auf eine Warnung gedämpft, weil sie derzeit
+bewusst 10.752 B darüber liegt (siehe unten); sobald sie wieder unter das Budget
+kommt, gehört der Schalter auf `'true'`.
+
 **Läuft ChatNicer noch, scheitert der Link mit `LNK1104`.** Vor jedem Build:
 
 ```powershell
