@@ -10,16 +10,16 @@
   Von Hand geaenderte Werte darin werden beim naechsten Push auf main
   ueberschrieben; Quelle sind die gebaute EXE und CHANGELOG.md.
 -->
-<meta name="description" content="ChatNicer ersetzt markierten Text in jedem Windows-Programm per Hotkey durch eine bessere Fassung – berechnet von einem lokalen Ollama-Modell. 116 KB, keine Cloud, kein Konto.">
+<meta name="description" content="ChatNicer ersetzt markierten Text in jedem Windows-Programm per Hotkey durch eine bessere Fassung – berechnet von einem lokalen Ollama-Modell. 111 KB, keine Cloud, kein Konto.">
 <link rel="canonical" href="https://chatnicer.de/">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://chatnicer.de/">
 <meta property="og:title" content="ChatNicer – Text per Hotkey lokal umformulieren">
-<meta property="og:description" content="Markierten Text per Hotkey von einem lokalen Ollama-Modell umformulieren lassen – überall in Windows. 116 KB EXE, kein Installer, keine Cloud.">
+<meta property="og:description" content="Markierten Text per Hotkey von einem lokalen Ollama-Modell umformulieren lassen – überall in Windows. 111 KB EXE, kein Installer, keine Cloud.">
 <meta property="og:locale" content="de_DE">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="ChatNicer – Text per Hotkey lokal umformulieren">
-<meta name="twitter:description" content="116 KB Windows-Tray-Tool. Text markieren, Hotkey drücken, lokales Ollama-Modell formuliert um.">
+<meta name="twitter:description" content="111 KB Windows-Tray-Tool. Text markieren, Hotkey drücken, lokales Ollama-Modell formuliert um.">
 <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Cpath d='M8 10.5h16M8 16h11' stroke='%23fff' stroke-width='2.6' stroke-linecap='round'/%3E%3Cpath d='M8 21.5h16' stroke='%23f59e0b' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
@@ -234,7 +234,7 @@ ChatNicer</a>
 <a class="btn btn-s btn-lg" href="https://github.com/FloMaetschke/chatnicer">Auf GitHub ansehen</a>
 </div>
 <ul class="chips">
-<li class="chip"><b><!--cn:size-kb-->116 KB<!--/cn:size-kb--></b> EXE</li>
+<li class="chip"><b><!--cn:size-kb-->111 KB<!--/cn:size-kb--></b> EXE</li>
 <li class="chip"><b>~1 Sekunde</b> pro Anfrage</li>
 <li class="chip"><b>100 %</b> lokal</li>
 </ul>
@@ -354,13 +354,13 @@ ChatNicer</a>
 <div class="wrap">
 <h2>Download</h2>
 <div class="dl">
-<a class="btn btn-p btn-lg" href="https://github.com/FloMaetschke/chatnicer/releases/download/v1.3/ChatNicer.exe">ChatNicer.exe · <!--cn:size-kb-->116 KB<!--/cn:size-kb--></a>
+<a class="btn btn-p btn-lg" href="https://github.com/FloMaetschke/chatnicer/releases/download/v1.3/ChatNicer.exe">ChatNicer.exe · <!--cn:size-kb-->111 KB<!--/cn:size-kb--></a>
 <div class="dl-meta">
-<span>Version <!--cn:version-->1.3<!--/cn:version--></span><span><!--cn:size-bytes-->118.272<!--/cn:size-bytes--> Bytes</span><span>Windows 10/11, x64</span>
+<span>Version <!--cn:version-->1.3<!--/cn:version--></span><span><!--cn:size-bytes-->113.664<!--/cn:size-bytes--> Bytes</span><span>Windows 10/11, x64</span>
 </div>
 <div class="dl-meta" style="align-items:center">
 <span>SHA-256</span>
-<div class="code" style="margin:0; flex:1; min-width:14rem"><pre><code id="sha256"><!--cn:sha256-->wird mit dem ersten automatischen Release eingetragen<!--/cn:sha256--></code></pre><button class="copy" type="button" data-copy-from="sha256">Kopieren</button></div>
+<div class="code" style="margin:0; flex:1; min-width:14rem"><pre><code id="sha256"><!--cn:sha256-->B4682E3A5C5C3AD194FE5F8B4EA50D5DFFD4B4354EBFE303956F5543AE7F7269<!--/cn:sha256--></code></pre><button class="copy" type="button" data-copy-from="sha256">Kopieren</button></div>
 </div>
 <div class="dl-links">
 <a href="https://github.com/FloMaetschke/chatnicer/releases">Alle Releases</a>
@@ -376,16 +376,16 @@ ChatNicer</a>
 <!--cn:releases-->
 <ul class="rel">
 <li>
+<h3><span class="v">v1.3</span> <time datetime="2026-07-27">27.07.2026</time></h3>
+<ul><li>Jeder Push auf <code class="i">main</code> veröffentlicht jetzt ein durchnummeriertes Release <code class="i">v1.x</code></li><li>Changelog und Landingpage werden dabei automatisch nachgezogen</li></ul>
+</li>
+<li>
 <h3><span class="v">v1.2</span> <time datetime="2026-07-26">26.07.2026</time></h3>
-<ul><li>Start-Warmup lädt das Modell schon beim Programmstart</li><li>Autostart-Schalter in den Einstellungen</li><li>Smileys werden nicht mehr in Worte übersetzt</li><li>Tolerantere Erkennung verschriebener Antwort-Tags</li></ul>
+<ul><li>Start-Warmup lädt das Modell schon beim Programmstart</li><li>Autostart-Schalter in den Einstellungen</li><li>Smileys werden nicht mehr in Worte übersetzt</li><li>Verschriebene Antwort-Tags werden toleriert</li></ul>
 </li>
 <li>
 <h3><span class="v">v1.1</span> <time datetime="2026-07-23">23.07.2026</time></h3>
 <ul><li>Tippmodus: Die Antwort wird live getippt, während das Modell streamt</li><li>Vier neue Regeln im System-Prompt gegen holprige Sätze</li></ul>
-</li>
-<li>
-<h3><span class="v">v1.0</span> <time datetime="2026-07-23">23.07.2026</time></h3>
-<ul><li>Standardmodell auf <code class="i">qwen3:4b-instruct</code> umgestellt: 1–4 s statt 14–27 s</li><li><code class="i">num_predict</code> und <code class="i">num_ctx</code> richten sich nach der Textlänge</li><li>Zweitversuch rettet leere Antworten denkender Modelle</li></ul>
 </li>
 </ul>
 <details>
@@ -393,8 +393,12 @@ ChatNicer</a>
 <div class="det-body">
 <ul class="rel" style="margin:0">
 <li style="border-top:0; padding-top:0">
+<h3><span class="v">v1.0</span> <time datetime="2026-07-23">23.07.2026</time></h3>
+<ul><li>Standardmodell ist <code class="i">qwen3:4b-instruct</code>: 1–4 s statt 14–27 s</li><li>Die Token-Grenzen richten sich nach der Textlänge</li><li>Ein Zweitversuch rettet leere Antworten denkender Modelle</li></ul>
+</li>
+<li>
 <h3><span class="v">v0.9</span> <time datetime="2026-07-23">23.07.2026</time></h3>
-<ul><li>Erste Fassung: Tray-Icon, globaler Hotkey, WinHTTP-Anbindung an die Ollama-API</li><li>Einstellungsdialog mit Verbindungstest und Modell-Liste</li><li>Handgeschriebener JSON-Umgang</li></ul>
+<ul><li>Erste Fassung: Tray-Icon, globaler Hotkey, WinHTTP-Anbindung an die Ollama-API</li><li>Einstellungsdialog mit Verbindungstest und Modell-Liste</li><li>Handgeschriebener JSON-Umgang statt Bibliothek</li></ul>
 </li>
 </ul>
 </div>
@@ -427,15 +431,15 @@ ChatNicer</a>
 </details>
 
 <details>
-<summary>Warum ist die EXE nur <!--cn:size-kb-->116 KB<!--/cn:size-kb--> groß?</summary>
+<summary>Warum ist die EXE nur <!--cn:size-kb-->111 KB<!--/cn:size-kb--> groß?</summary>
 <div class="det-body">
 <p>Reines Win32 plus WinHTTP, keine einzige externe Bibliothek: kein .NET, kein Electron, kein curl, keine JSON-Bibliothek. Die vcruntime wird statisch gebunden, die Universal CRT dynamisch – <code class="i">ucrtbase.dll</code> gehört seit Windows 10 zum System, deshalb braucht es kein Redistributable. Dazu <code class="i">/O1 /Os</code>, <code class="i">/GL</code> mit <code class="i">/LTCG</code>, <code class="i">/GR-</code>, <code class="i">/GS-</code>, <code class="i">/OPT:REF /OPT:ICF</code> und abgeschaltete Exceptions. Die Icons zeichnet das Programm zur Laufzeit, es gibt keine Ressourcendatei.</p>
 <div class="scrollx">
 <table>
 <thead><tr><th>Variante</th><th style="text-align:right">Größe</th><th>Laufzeitabhängigkeit</th></tr></thead>
 <tbody>
-<tr class="hl"><td><strong>Standard-Release</strong></td><td class="num"><strong><!--cn:size-bytes-->118.272<!--/cn:size-bytes--> B</strong></td><td>nur <code class="i">ucrtbase.dll</code> (Windows-Systemdatei)</td></tr>
-<tr><td>statische CRT + Exceptions (<code class="i">build.bat compat</code>)</td><td class="num"><!--cn:size-compat-->215.552<!--/cn:size-compat--> B</td><td>keine</td></tr>
+<tr class="hl"><td><strong>Standard-Release</strong></td><td class="num"><strong><!--cn:size-bytes-->113.664<!--/cn:size-bytes--> B</strong></td><td>nur <code class="i">ucrtbase.dll</code> (Windows-Systemdatei)</td></tr>
+<tr><td>statische CRT + Exceptions (<code class="i">build.bat compat</code>)</td><td class="num"><!--cn:size-compat-->212.992<!--/cn:size-compat--> B</td><td>keine</td></tr>
 <tr><td>dynamische CRT (<code class="i">/MD</code>)</td><td class="num">106.496 B</td><td>VC++-Redistributable erforderlich</td></tr>
 </tbody>
 </table>

@@ -25,6 +25,10 @@ Die Größenangaben sind gemessene Werte des Standard-Release
 
 ## [Unveröffentlicht]
 
+_Noch nichts eingetragen. Wer etwas ändert, schreibt es hierhin – der nächste Push auf `main` macht daraus Version 1.4._
+
+## [1.3] – 2026-07-27
+
 > **Kurzfassung:** Jeder Push auf `main` veröffentlicht jetzt ein durchnummeriertes Release `v1.x`; Changelog und Landingpage werden dabei automatisch nachgezogen
 
 ### Hinzugefügt
