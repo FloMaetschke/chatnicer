@@ -25,6 +25,10 @@ Die Größenangaben sind gemessene Werte des Standard-Release
 
 ## [Unveröffentlicht]
 
+_Noch nichts eingetragen. Wer etwas ändert, schreibt es hierhin – der nächste Push auf `main` macht daraus Version 1.8._
+
+## [1.7] – 2026-07-27
+
 > **Kurzfassung:** Neuer Hotkey STRG+ALT+SPACE schlägt Antworten auf den offenen Chat in Teams und Discord vor; ChatNicer liest den Verlauf wie ein Screenreader über die Accessibility-Schnittstelle; die Vorschläge erscheinen als Sprechblasen über dem Eingabefeld und werden per Klick eingefügt; das Einstellungsfenster hat jetzt Registerkarten und lässt sich in der Größe ziehen
 
 ### Hinzugefügt

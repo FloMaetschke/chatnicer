@@ -10,16 +10,16 @@
   Von Hand geaenderte Werte darin werden beim naechsten Push auf main
   ueberschrieben; Quelle sind die gebaute EXE und CHANGELOG.md.
 -->
-<meta name="description" content="ChatNicer ersetzt markierten Text in jedem Windows-Programm per Hotkey durch eine bessere Fassung – berechnet von einem lokalen Ollama-Modell. 111 KB, keine Cloud, kein Konto.">
+<meta name="description" content="ChatNicer ersetzt markierten Text in jedem Windows-Programm per Hotkey durch eine bessere Fassung – berechnet von einem lokalen Ollama-Modell. 139 KB, keine Cloud, kein Konto.">
 <link rel="canonical" href="https://chatnicer.de/">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://chatnicer.de/">
 <meta property="og:title" content="ChatNicer – Text per Hotkey lokal umformulieren">
-<meta property="og:description" content="Markierten Text per Hotkey von einem lokalen Ollama-Modell umformulieren lassen – überall in Windows. 111 KB EXE, kein Installer, keine Cloud.">
+<meta property="og:description" content="Markierten Text per Hotkey von einem lokalen Ollama-Modell umformulieren lassen – überall in Windows. 139 KB EXE, kein Installer, keine Cloud.">
 <meta property="og:locale" content="de_DE">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="ChatNicer – Text per Hotkey lokal umformulieren">
-<meta name="twitter:description" content="111 KB Windows-Tray-Tool. Text markieren, Hotkey drücken, lokales Ollama-Modell formuliert um.">
+<meta name="twitter:description" content="139 KB Windows-Tray-Tool. Text markieren, Hotkey drücken, lokales Ollama-Modell formuliert um.">
 <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Cpath d='M8 10.5h16M8 16h11' stroke='%23fff' stroke-width='2.6' stroke-linecap='round'/%3E%3Cpath d='M8 21.5h16' stroke='%23f59e0b' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
@@ -239,11 +239,11 @@ ChatNicer</a>
 <h1>Besser formulieren, ohne das Fenster zu wechseln.</h1>
 <p class="sub">ChatNicer ersetzt markierten Text per Hotkey durch eine bessere Fassung – gerechnet von einem lokalen Ollama-Modell, überall in Windows. In Teams und Discord schlägt es auf Wunsch auch gleich die Antwort vor.</p>
 <div class="actions">
-<a class="btn btn-p btn-lg" href="https://github.com/FloMaetschke/chatnicer/releases/download/v1.6/ChatNicer.exe">ChatNicer.exe herunterladen</a>
+<a class="btn btn-p btn-lg" href="https://github.com/FloMaetschke/chatnicer/releases/download/v1.7/ChatNicer.exe">ChatNicer.exe herunterladen</a>
 <a class="btn btn-s btn-lg" href="https://github.com/FloMaetschke/chatnicer">Auf GitHub ansehen</a>
 </div>
 <ul class="chips">
-<li class="chip"><b><!--cn:size-kb-->111 KB<!--/cn:size-kb--></b> EXE</li>
+<li class="chip"><b><!--cn:size-kb-->139 KB<!--/cn:size-kb--></b> EXE</li>
 <li class="chip"><b>~1 Sekunde</b> pro Anfrage</li>
 <li class="chip"><b>100 %</b> lokal</li>
 </ul>
@@ -389,13 +389,13 @@ ChatNicer</a>
 <div class="wrap">
 <h2>Download</h2>
 <div class="dl">
-<a class="btn btn-p btn-lg" href="https://github.com/FloMaetschke/chatnicer/releases/download/v1.6/ChatNicer.exe">ChatNicer.exe · <!--cn:size-kb-->111 KB<!--/cn:size-kb--></a>
+<a class="btn btn-p btn-lg" href="https://github.com/FloMaetschke/chatnicer/releases/download/v1.7/ChatNicer.exe">ChatNicer.exe · <!--cn:size-kb-->139 KB<!--/cn:size-kb--></a>
 <div class="dl-meta">
-<span>Version <!--cn:version-->1.6<!--/cn:version--></span><span><!--cn:size-bytes-->113.664<!--/cn:size-bytes--> Bytes</span><span>Windows 10/11, x64</span>
+<span>Version <!--cn:version-->1.7<!--/cn:version--></span><span><!--cn:size-bytes-->141.824<!--/cn:size-bytes--> Bytes</span><span>Windows 10/11, x64</span>
 </div>
 <div class="dl-meta" style="align-items:center">
 <span>SHA-256</span>
-<div class="code" style="margin:0; flex:1; min-width:14rem"><pre><code id="sha256"><!--cn:sha256-->589F01979757E8FDB3620BE481CD7C31E7D426E4071488545B2797BB7DF94D03<!--/cn:sha256--></code></pre><button class="copy" type="button" data-copy-from="sha256">Kopieren</button></div>
+<div class="code" style="margin:0; flex:1; min-width:14rem"><pre><code id="sha256"><!--cn:sha256-->93B3B36E39530656582CC999D9E81FB3CDE863B281447CCBD1B7D14C9D62C3D6<!--/cn:sha256--></code></pre><button class="copy" type="button" data-copy-from="sha256">Kopieren</button></div>
 </div>
 <div class="dl-links">
 <a href="https://github.com/FloMaetschke/chatnicer/releases">Alle Releases</a>
@@ -411,6 +411,10 @@ ChatNicer</a>
 <!--cn:releases-->
 <ul class="rel">
 <li>
+<h3><span class="v">v1.7</span> <time datetime="2026-07-27">27.07.2026</time></h3>
+<ul><li>Neuer Hotkey STRG+ALT+SPACE schlägt Antworten auf den offenen Chat in Teams und Discord vor</li><li>ChatNicer liest den Verlauf wie ein Screenreader über die Accessibility-Schnittstelle</li><li>die Vorschläge erscheinen als Sprechblasen über dem Eingabefeld und werden per Klick eingefügt</li><li>das Einstellungsfenster hat jetzt Registerkarten und lässt sich in der Größe ziehen</li></ul>
+</li>
+<li>
 <h3><span class="v">v1.6</span> <time datetime="2026-07-27">27.07.2026</time></h3>
 <ul><li>Update CNAME</li></ul>
 </li>
@@ -418,16 +422,16 @@ ChatNicer</a>
 <h3><span class="v">v1.5</span> <time datetime="2026-07-27">27.07.2026</time></h3>
 <ul><li>Ohne Changelog-Eintrag veroeffentlicht</li></ul>
 </li>
-<li>
-<h3><span class="v">v1.4</span> <time datetime="2026-07-27">27.07.2026</time></h3>
-<ul><li>Delete CNAME</li><li>Create CNAME</li><li>Update CNAME</li></ul>
-</li>
 </ul>
 <details>
 <summary>Ältere Versionen</summary>
 <div class="det-body">
 <ul class="rel" style="margin:0">
 <li style="border-top:0; padding-top:0">
+<h3><span class="v">v1.4</span> <time datetime="2026-07-27">27.07.2026</time></h3>
+<ul><li>Delete CNAME</li><li>Create CNAME</li><li>Update CNAME</li></ul>
+</li>
+<li>
 <h3><span class="v">v1.3</span> <time datetime="2026-07-27">27.07.2026</time></h3>
 <ul><li>Jeder Push auf <code class="i">main</code> veröffentlicht jetzt ein durchnummeriertes Release <code class="i">v1.x</code></li><li>Changelog und Landingpage werden dabei automatisch nachgezogen</li></ul>
 </li>
@@ -478,15 +482,15 @@ ChatNicer</a>
 </details>
 
 <details>
-<summary>Warum ist die EXE nur <!--cn:size-kb-->111 KB<!--/cn:size-kb--> groß?</summary>
+<summary>Warum ist die EXE nur <!--cn:size-kb-->139 KB<!--/cn:size-kb--> groß?</summary>
 <div class="det-body">
 <p>Reines Win32 plus WinHTTP, keine einzige externe Bibliothek: kein .NET, kein Electron, kein curl, keine JSON-Bibliothek. Die vcruntime wird statisch gebunden, die Universal CRT dynamisch – <code class="i">ucrtbase.dll</code> gehört seit Windows 10 zum System, deshalb braucht es kein Redistributable. Dazu <code class="i">/O1 /Os</code>, <code class="i">/GL</code> mit <code class="i">/LTCG</code>, <code class="i">/GR-</code>, <code class="i">/GS-</code>, <code class="i">/OPT:REF /OPT:ICF</code> und abgeschaltete Exceptions. Die Icons zeichnet das Programm zur Laufzeit, es gibt keine Ressourcendatei.</p>
 <div class="scrollx">
 <table>
 <thead><tr><th>Variante</th><th style="text-align:right">Größe</th><th>Laufzeitabhängigkeit</th></tr></thead>
 <tbody>
-<tr class="hl"><td><strong>Standard-Release</strong></td><td class="num"><strong><!--cn:size-bytes-->113.664<!--/cn:size-bytes--> B</strong></td><td>nur <code class="i">ucrtbase.dll</code> (Windows-Systemdatei)</td></tr>
-<tr><td>statische CRT + Exceptions (<code class="i">build.bat compat</code>)</td><td class="num"><!--cn:size-compat-->212.992<!--/cn:size-compat--> B</td><td>keine</td></tr>
+<tr class="hl"><td><strong>Standard-Release</strong></td><td class="num"><strong><!--cn:size-bytes-->141.824<!--/cn:size-bytes--> B</strong></td><td>nur <code class="i">ucrtbase.dll</code> (Windows-Systemdatei)</td></tr>
+<tr><td>statische CRT + Exceptions (<code class="i">build.bat compat</code>)</td><td class="num"><!--cn:size-compat-->243.200<!--/cn:size-compat--> B</td><td>keine</td></tr>
 <tr><td>dynamische CRT (<code class="i">/MD</code>)</td><td class="num">106.496 B</td><td>VC++-Redistributable erforderlich</td></tr>
 </tbody>
 </table>
