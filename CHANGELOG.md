@@ -25,7 +25,15 @@ Die Größenangaben sind gemessene Werte des Standard-Release
 
 ## [Unveröffentlicht]
 
-_Noch nichts eingetragen. Wer etwas ändert, schreibt es hierhin – der nächste Push auf `main` macht daraus Version 1.5._
+_Noch nichts eingetragen. Wer etwas ändert, schreibt es hierhin – der nächste Push auf `main` macht daraus Version 1.6._
+
+## [1.5] – 2026-07-27
+
+> **Kurzfassung:** Ohne Changelog-Eintrag veroeffentlicht
+
+### Geändert
+
+- Ohne Changelog-Eintrag veroeffentlicht
 
 ## [1.4] – 2026-07-27
 
