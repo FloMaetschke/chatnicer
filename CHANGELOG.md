@@ -25,7 +25,17 @@ Die Größenangaben sind gemessene Werte des Standard-Release
 
 ## [Unveröffentlicht]
 
-_Noch nichts eingetragen. Wer etwas ändert, schreibt es hierhin – der nächste Push auf `main` macht daraus Version 1.4._
+_Noch nichts eingetragen. Wer etwas ändert, schreibt es hierhin – der nächste Push auf `main` macht daraus Version 1.5._
+
+## [1.4] – 2026-07-27
+
+> **Kurzfassung:** Delete CNAME; Create CNAME; Update CNAME
+
+### Geändert
+
+- Delete CNAME
+- Create CNAME
+- Update CNAME
 
 ## [1.3] – 2026-07-27
 
