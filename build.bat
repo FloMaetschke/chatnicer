@@ -60,7 +60,8 @@ cl /nologo /std:c++17 /permissive- /W4 /MT /utf-8 %CLEXTRA% ^
    /Fobuild\ /Fdbuild\ main.cpp ^
    /link /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO /SUBSYSTEM:WINDOWS /RELEASE ^
    /MANIFEST:EMBED %LINKEXTRA% /OUT:build\%OUTNAME% ^
-   user32.lib gdi32.lib shell32.lib comctl32.lib winhttp.lib advapi32.lib
+   user32.lib gdi32.lib shell32.lib comctl32.lib winhttp.lib advapi32.lib ^
+   oleacc.lib oleaut32.lib ole32.lib
 
 if errorlevel 1 (
     echo.

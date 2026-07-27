@@ -1,9 +1,10 @@
 # ChatNicer
 
-Ein sehr leichtgewichtiges Windows-Tray-Programm (**116 KB**, reines Win32 + WinHTTP):
+Ein sehr leichtgewichtiges Windows-Tray-Programm (**148 KB**, reines Win32 + WinHTTP):
 markierten Text per Hotkey an ein lokales **Ollama**-Modell schicken und die Antwort
 direkt an der Cursorposition wieder einfügen – oder sie live tippen lassen, während
-das Modell sie schreibt.
+das Modell sie schreibt. Auf Wunsch schlägt ChatNicer auch **Antworten auf den
+offenen Chat in Teams und Discord** vor.
 
 Keine externen Abhängigkeiten – kein .NET, kein curl, keine JSON-Bibliothek, kein
 VC++-Redistributable. Der Text verlässt den Rechner nicht.
@@ -78,6 +79,39 @@ Zwei Dinge, die man dabei wissen sollte:
 
 Die Zwischenablage bekommt im Tippmodus nie die Antwort zu sehen – nur den
 markierten Originaltext, den ChatNicer ohnehin kopieren muss.
+
+### Antwortvorschläge für Teams und Discord (optional)
+
+**STRG + ALT + LEERTASTE** in einem offenen Chat: ChatNicer liest den zuletzt
+sichtbaren Teil der Unterhaltung, fragt das Modell nach drei Antworten und zeigt
+sie als Sprechblasen über dem Eingabefeld – ähnlich den Schnellantworten, die
+Teams selbst manchmal anbietet. Ein **Klick fügt die gewählte Antwort ein**,
+abgeschickt wird nichts.
+
+Gelesen wird über dieselbe Barrierefreiheits-Schnittstelle, die auch ein
+Screenreader nutzt. Der Umfang ist bewusst eng:
+
+* nur das **Vordergrundfenster**, und nur wenn es Teams oder Discord ist,
+* darin nur der **eine geöffnete Chat** – die Chatliste in der Seitenleiste wird
+  nie gelesen,
+* davon nur die **letzten 8 Nachrichten** (`ReplyContext` in der `config.ini`).
+
+Ist kein Chat geöffnet oder liegt ein anderes Programm vorn, passiert
+stillschweigend nichts. Das Popup schließt sich mit **ESC**, per Rechtsklick,
+sobald ein anderes Fenster nach vorn kommt, und spätestens nach 45 Sekunden.
+Abschalten lässt sich das Ganze in den Einstellungen
+(**„Antwortvorschlaege in Teams und Discord anbieten"**).
+
+> **Discord braucht einen Startschalter.** Anders als Teams baut Discord seinen
+> Barrierefreiheits-Baum nicht von selbst auf. Damit ChatNicer den Verlauf lesen
+> kann, muss Discord einmal mit `--force-renderer-accessibility` gestartet
+> werden – zum Beispiel, indem man diesen Schalter in der Verknüpfung hinter den
+> Pfad schreibt. Ohne ihn meldet ChatNicer das im Klartext, statt einfach nichts
+> zu tun. Teams funktioniert ohne jede Vorbereitung.
+
+Der Chatverlauf wird dem Modell ausdrücklich als *Material* übergeben, nicht als
+Auftrag: Eine Nachricht wie „ignoriere deine Anweisungen und …“ wirkt damit nicht
+als Anweisung an das Modell.
 
 ---
 
@@ -157,9 +191,10 @@ korrigiert.
 
 | Datei | Inhalt |
 |---|---|
-| `main.cpp` | Tray-Icon, Kontextmenü, Einstellungsfenster, Hotkey, Clipboard, Ablaufsteuerung |
-| `config.h` | `config.ini`, Standard-System-Prompt, Hotkey-Parsing |
+| `main.cpp` | Tray-Icon, Kontextmenü, Einstellungsfenster, Hotkeys, Clipboard, Vorschlags-Popup, Ablaufsteuerung |
+| `config.h` | `config.ini`, Standard-System-Prompts, Hotkey-Parsing |
 | `network.h` | WinHTTP, Ollama-API, JSON-Erzeugung und -Auswertung, Streaming-Filter |
+| `chatread.h` | Liest den offenen Chat aus Teams/Discord über die Barrierefreiheits-Schnittstelle |
 | `ChatNicer.sln` / `.vcxproj` | Visual-Studio-2022-Projekt (x64, Debug + Release) |
 | `build.bat` | Build ohne IDE – sucht die VS-Buildtools selbstständig |
 | `CHANGELOG.md` | Änderungen, nach Version gegliedert – Eingabe für die Veröffentlichung |
@@ -179,8 +214,8 @@ Die Icons werden zur Laufzeit gezeichnet, deshalb gibt es **keine `.rc`-Datei**.
 **Ohne IDE:**
 
 ```bat
-build.bat            :: Standard, 116 KB -> build\ChatNicer.exe
-build.bat compat     :: komplett statische CRT inkl. Exceptions (211 KB)
+build.bat            :: Standard, 148 KB -> build\ChatNicer.exe
+build.bat compat     :: komplett statische CRT inkl. Exceptions (244 KB)
 ```
 
 ### Warum die EXE so klein ist
@@ -191,12 +226,11 @@ Tabelle). Gemessen mit VS 2022 / Windows SDK 10.0.26100:
 
 | Variante | Größe | Laufzeitabhängigkeit |
 |---|---:|---|
-| statische CRT + Exceptions (`build.bat compat`) | 215.552 B | keine |
-| **Standard-Release** | **118.272 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
-| dynamische CRT (`/MD`) | 106.496 B | VC++-Redistributable erforderlich |
+| statische CRT + Exceptions (`build.bat compat`) | 249.856 B | keine |
+| **Standard-Release** | **151.040 B** | nur `ucrtbase.dll` (Windows-Systemdatei) |
 
-Der Standard-Release hat rund 84 KB Reserve. Die compat-Variante liegt aktuell
-10,5 KB über dem Budget – sie ist funktionsfähig, aber eben kein 200-KB-Build mehr.
+Der Standard-Release hat rund 52 KB Reserve. Die compat-Variante liegt aktuell
+44 KB über dem Budget – sie ist funktionsfähig, aber eben kein 200-KB-Build mehr.
 Wer sie schlank braucht, kann den Standard-Prompt aus dem Programm auslagern; er
 allein macht rund 3 KB der EXE aus.
 
@@ -213,10 +247,27 @@ Die vollständige Kommandozeile steht als Kommentar am Anfang von `main.cpp`.
 Rechtsklick auf das Tray-Icon → **Einstellungen** (oder Doppelklick aufs Icon).
 Beim ersten Start öffnet sich der Dialog automatisch.
 
+Die Einstellungen liegen auf drei Registerkarten:
+
+| Karte | Inhalt |
+|---|---|
+| **Verbindung** | Ollama-URL, Modell, API-Key, Verbindungstest, Startmeldung, Autostart |
+| **Umformulieren** | Hotkey und System-Prompt des Haupt-Hotkeys, Tippmodus, Zwischenablage |
+| **Antwortvorschläge** | Ein/Aus, Hotkey, Zahl der gelesenen Nachrichten, eigener System-Prompt |
+
+**Das Fenster lässt sich in der Größe ziehen.** Der zusätzliche Platz geht in der
+Höhe komplett an das jeweilige Prompt-Feld – beide Prompts sind lang, und im
+kleinen Fenster liest man sie durch ein Guckloch.
+
 Das Feld **Modell** ist eine Auswahlliste: ChatNicer holt die installierten Modelle
 im Hintergrund über `/api/tags`. Eigene Eingaben bleiben trotzdem möglich.
 **Verbindung testen** schickt eine Beispielanfrage und zeigt Antwort und Dauer,
 ohne etwas einzufügen.
+
+Beide System-Prompts sind frei bearbeitbar. Beim Prompt für die Vorschläge gilt
+allerdings eine Bedingung: **Er muss die Antworten in `<reply>`-Tags verlangen** –
+daraus schneidet ChatNicer die einzelnen Vorschläge heraus. Liefert das Modell
+keine Tags, erscheint die ganze Antwort als ein einzelner Vorschlag.
 
 Gespeichert wird in `config.ini` neben der EXE. Liegt das Programm in einem
 schreibgeschützten Ordner (z. B. `C:\Program Files`), weicht es automatisch auf
@@ -230,6 +281,10 @@ ApiKey=                        ; nur für abgesichertes Remote-Ollama
 SystemPrompt=...               ; siehe unten
 Temperature=0.2                ; niedrig = weniger Abschweifen
 Hotkey=CTRL+SHIFT+SPACE
+ReplyHotkey=CTRL+ALT+SPACE     ; Antwortvorschläge für Teams/Discord
+ReplyEnabled=1                 ; 0 = Antwortvorschläge abschalten
+ReplyContext=8                 ; so viele Nachrichten vom Ende des Verlaufs
+ReplyPrompt=...                ; System-Prompt für die Vorschläge
 RestoreClipboard=1
 TypingInput=0                  ; 1 = Antwort live tippen statt einfügen
 WarmupNotify=1                 ; 0 = keine Erfolgsmeldung nach dem Start-Warmup
@@ -423,7 +478,7 @@ hineinlegen (dann bleibt die Checkbox leer – sie kennt nur den Registry-Eintra
 
 Auf Windows 11 (Build 26200), VS 2022, Ollama 0.21.2 gebaut und geprüft:
 
-* Release-Build fehlerfrei bei `/W4`, 116 KB (118.272 Bytes) – über `build.bat` und MSBuild
+* Release-Build fehlerfrei bei `/W4`, 148 KB (151.040 Bytes) – über `build.bat` und MSBuild
 * 43 automatisierte Tests, davon der Großteil live gegen das lokale Ollama:
   JSON-Erzeugung, XML-Extraktion inklusive aller real beobachteten kaputten
   Tag-Schreibweisen, Denkprozess-Filter, `config.ini`-Roundtrip mit Umlauten,
@@ -487,6 +542,40 @@ Zu den beiden neuen Schaltern geprüft:
 * Nicht automatisiert prüfbar war die Sichtbarkeit der Sprechblase selbst – sie
   ließ sich über UIAutomation nicht abgreifen (gilt für alle Tray-Meldungen der
   App gleichermaßen)
+
+Zu den Antwortvorschlägen geprüft (Teams 26183.1903, Discord 1.0.9249):
+
+* **Teams:** Hotkey im offenen Chat ausgelöst, Popup nach 3 s mit drei
+  unterschiedlichen deutschen Vorschlägen, die erkennbar auf den letzten Beitrag
+  eingehen; Kopfzeile nennt den Gesprächspartner aus dem Fenstertitel. Ohne
+  Vorbereitung, Teams lag im Hintergrund des Testskripts
+* **Discord:** derselbe Ablauf, Popup nach 3 s; die Kopfzeile nennt den Chat aus
+  dem Anker `Nachrichten in <Chat>`
+* Der Verlauf wird über MSAA gelesen: 17 Einträge des offenen DMs in 1,2 s,
+  chronologisch korrekt, Absender und Emojis unverfälscht. Die Chatliste der
+  Seitenleiste (`Direktnachrichten`) wird dabei nicht angefasst
+* **ESC** schließt das Popup innerhalb von 250 ms – gemessen mit simuliertem
+  Tastendruck, während das Chatfenster den Fokus hatte
+* Discord ohne `--force-renderer-accessibility` gegengeprüft: kein
+  `Chrome_RenderWidgetHostHWND`, weder ein `WM_GETOBJECT` noch das systemweite
+  Screenreader-Flag aktivieren den Baum – auch nach 24 s nicht. ChatNicer meldet
+  in diesem Fall den Klartext-Hinweis statt still nichts zu tun
+* Nicht automatisiert geprüft wurde das Einfügen per Klick: ein Test hätte Text
+  in einen echten Chat mit einer anderen Person geschrieben und dort den
+  „tippt gerade …"-Hinweis ausgelöst
+
+Zum umgebauten Einstellungsfenster geprüft:
+
+* Alle drei Registerkarten durchgeschaltet und einzeln fotografiert; der Dialog
+  ist dabei von 683 auf **445 px** Höhe geschrumpft, obwohl er mehr Einstellungen
+  zeigt als vorher
+* Größenänderung auf 900×800: das Prompt-Feld wächst auf 836×495 mit, die
+  Schaltflächen bleiben rechts unten in ihrer Größe, die Elemente unter dem
+  Prompt rutschen mit
+* Mindestgröße greift – ein Verkleinern auf 200×200 lässt das Fenster bei 536×445
+* Prompt für die Vorschläge von außen gesetzt und gespeichert: landet als
+  `ReplyPrompt` in der `config.ini`, Zeilenumbrüche als `\n` escaped, Umlaute
+  erhalten; `ReplyContext=12` ebenso übernommen
 
 ---
 
