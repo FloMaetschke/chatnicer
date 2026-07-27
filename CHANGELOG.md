@@ -3,19 +3,29 @@
 Alle nennenswerten Änderungen an ChatNicer. Format angelehnt an
 [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
-**Es gibt noch keine Versionsnummern.** Jeder Push auf `main` ersetzt das rollende
-Prerelease [`latest`](../../releases/tag/latest); die Einträge sind deshalb nach
-Datum gegliedert und nennen den Commit. Sobald versionierte Releases anfangen,
-werden die Abschnitte auf `## [x.y.z] – Datum` umgestellt.
+**Die Versionsnummern vergibt die CI.** Jeder Push auf `main` veröffentlicht ein
+Release `v1.x`, zählt dabei die zweite Stelle hoch (`1.3` → `1.4` → … → `1.10`)
+und macht aus dem Abschnitt „Unveröffentlicht" den Abschnitt der neuen Version.
+Wer etwas ändert, trägt es also **vorher hier ein**; siehe [CLAUDE.md](CLAUDE.md),
+Abschnitt „Changelog und Versionen". Bleibt „Unveröffentlicht" leer, füllt die CI
+den Abschnitt mit den Commit-Titeln seit dem letzten Release – lesbar wird das
+selten, deshalb ist es der Notnagel und nicht der Normalfall.
+
+Jeder Versionsabschnitt beginnt mit einer Zeile `> **Kurzfassung:** …`. Sie ist
+kein Schmuck: Die Landingpage unter [`docs/`](docs/) baut ihre Versionsliste
+daraus und trennt die Stichpunkte an `;`. Fehlt die Zeile, nimmt die CI die ersten
+drei Stichpunkte des Abschnitts und kürzt sie auf den ersten Satz.
+
+Die Versionen **0.9 bis 1.2** sind nachträglich zugeordnet und haben kein
+Release-Tag: Sie entstanden, bevor die Veröffentlichung automatisch lief. Die
+Nummern stammen von der Landingpage, die sie bereits nannte.
 
 Die Größenangaben sind gemessene Werte des Standard-Release
 (`build.bat`, x64, VS 2022 / Windows SDK 10.0.26100).
 
 ## [Unveröffentlicht]
 
-Noch keine Änderungen seit `b599514`.
-
-## 2026-07-27 – CI und automatische Veröffentlichung (`b599514`)
+> **Kurzfassung:** Jeder Push auf `main` veröffentlicht jetzt ein durchnummeriertes Release `v1.x`; Changelog und Landingpage werden dabei automatisch nachgezogen
 
 ### Hinzugefügt
 
@@ -29,13 +39,54 @@ Noch keine Änderungen seit `b599514`.
 - MSBuild-Gegenprobe gegen `ChatNicer.sln`: sie prüft nicht die EXE, sondern dass
   `ChatNicer.vcxproj` nicht verrottet – Flags und Bibliotheken stehen doppelt
   (so wäre `advapi32.lib` beinahe untergegangen).
-- Release-Job: hängt `ChatNicer.exe` an das rollende Prerelease `latest`, mit
-  Commit, Größe und SHA256 in den Release-Notes. Er läuft nur nach beiden grünen
-  Build-Jobs und nur bei Push auf `main`, damit ein Fork-PR nie `contents: write`
-  in die Hand bekommt. Die compat-Variante wird nicht veröffentlicht, sie liegt
-  nur im Build-Artefakt `ChatNicer-x64`.
+- **Durchnummerierte Releases.** Der Release-Job vergibt `v1.x` fortlaufend: Die
+  nächste Nummer ist das Maximum aus den vorhandenen `v1.*`-Tags und den
+  Abschnitten dieser Datei, plus eins. Beide Quellen zu befragen war Absicht – ein
+  von Hand gesetzter Tag und ein von Hand geschriebener Abschnitt sollen beide
+  gelten, und der höhere gewinnt.
+- **`.github/scripts/Publish-Release.ps1`** erledigt die Fleißarbeit: Version
+  bestimmen, „Unveröffentlicht" zum Versionsabschnitt machen, `docs/index.html`
+  auf Version, Datum, Größen, SHA256 und Download-Links nachziehen, Release-Notes
+  schreiben. Es liegt als eigene Datei statt inline im YAML, damit es sich mit
+  `-DryRun` gegen eine Kopie testen lässt.
+- Die Landingpage trägt jetzt die echten Werte: Prüfsumme, Größe beider Varianten
+  und eine Versionsliste, die aus den `> **Kurzfassung:**`-Zeilen dieser Datei
+  entsteht. Gesteuert wird das über Kommentar-Marker (`cn:version`, `cn:sha256`,
+  `cn:releases`, …); fehlt einer, bricht der Release-Job ab. Eine Seite, die still
+  veraltete Zahlen zeigt, ist schlimmer als ein roter Lauf – vor der Umstellung
+  stand dort Version 1.2 mit einer Platzhalter-Prüfsumme.
+- Bleibt „Unveröffentlicht" leer, veröffentlicht die CI trotzdem und füllt den
+  Abschnitt mit den Commit-Titeln seit dem letzten Tag, samt Warnung in der
+  Job-Zusammenfassung. Ein Tippfehler-Fix soll keinen Push blockieren.
 
-## 2026-07-26 – Start-Warmup und Autostart (`a78716d`)
+### Geändert
+
+- **Das rollende Prerelease `latest` entfällt.** An seine Stelle treten
+  vollwertige Releases `v1.x`. Damit zeigt
+  `…/releases/latest/download/ChatNicer.exe` von selbst immer auf die neueste
+  Version – ein Tag namens `latest` stand diesem GitHub-eigenen Begriff nur im
+  Weg. Der erste Lauf räumt das alte Release samt Tag ab.
+- Die Download-Knöpfe auf der Landingpage zeigen auf die **konkrete** Version
+  statt auf `latest`: Daneben steht eine Prüfsumme, und die gehört zu genau einer
+  Datei.
+- Der Release-Job schreibt Changelog und Landingpage als Commit nach `main`
+  zurück (`[skip ci]`, Autor `github-actions[bot]`) und taggt erst danach – so
+  enthält der getaggte Stand seinen eigenen Changelog-Eintrag. Der Commit ändert
+  ausschließlich `CHANGELOG.md` und `docs/index.html`, die EXE bleibt also die
+  gebaute.
+- Dieses Changelog ist damit Eingabe für die CI und nicht mehr nur Dokumentation:
+  Der Abschnitt „Unveröffentlicht" wird beim Release zum Abschnitt der neuen
+  Version. Wie das gepflegt wird, steht im Kopf dieser Datei und in `CLAUDE.md`.
+
+### Behoben
+
+- Die Landingpage nannte Version 1.2 mit 115.712 Bytes und „113 KB", die Tabelle
+  212.480 B für die compat-Variante – alles Stände von vor dem Warmup. Statt der
+  Prüfsumme stand ein Platzhalter. Diese Werte pflegt jetzt die CI.
+
+## [1.2] – 2026-07-26
+
+> **Kurzfassung:** Start-Warmup lädt das Modell schon beim Programmstart; Autostart-Schalter in den Einstellungen; Smileys werden nicht mehr in Worte übersetzt; Verschriebene Antwort-Tags werden toleriert
 
 ### Hinzugefügt
 
@@ -56,24 +107,6 @@ Noch keine Änderungen seit `b599514`.
   in der `config.ini`: Windows liest die Registry, sie ist die Wahrheit. Der Pfad
   wird in Anführungszeichen geschrieben, beim Einschalten immer neu – so heilt
   sich ein Eintrag, der auf eine verschobene EXE zeigt.
-
-### Geändert
-
-- `advapi32.lib` ist Pflicht (in `build.bat`, `ChatNicer.vcxproj` und als
-  `#pragma comment(lib, …)` in `main.cpp`).
-- Schlägt der Registry-Zugriff fehl, meldet der Dialog das, speichert die übrigen
-  Einstellungen aber trotzdem und setzt die Checkbox auf den echten Zustand
-  zurück.
-
-### Größe
-
-- Standard-Release 118.272 B. Die compat-Variante wächst auf 215.552 B und liegt
-  damit 10.752 B über dem Budget (Warmup 4.608 B, die beiden Schalter 3.072 B).
-
-## 2026-07-26 – Tolerante Tag-Erkennung und Emoji-Regel (`ada0405`)
-
-### Hinzugefügt
-
 - `IsFrameTagName()` entscheidet über den Tagnamen statt über exakte Gleichheit:
   erkannt wird, was mit `rewrit` beginnt **oder** `text` enthält, bei höchstens 32
   Namenszeichen. Anlass war ein real aufgetretenes `</rewrittening_text>` am
@@ -92,8 +125,20 @@ Noch keine Änderungen seit `b599514`.
   nicht, das Verbot steht jetzt samt Beispiel der falschen Ausgabe da.
 - Der Prompt verlangt zusätzlich ausdrücklich die exakte Schreibweise beider Tags.
   Das ist die Bitte, `IsFrameTagName()` ist die Absicherung.
+- `advapi32.lib` ist Pflicht (in `build.bat`, `ChatNicer.vcxproj` und als
+  `#pragma comment(lib, …)` in `main.cpp`).
+- Schlägt der Registry-Zugriff fehl, meldet der Dialog das, speichert die übrigen
+  Einstellungen aber trotzdem und setzt die Checkbox auf den echten Zustand
+  zurück.
 
-## 2026-07-23 – Tippmodus (`fd45743`)
+### Größe
+
+- Standard-Release 118.272 B. Die compat-Variante wächst auf 215.552 B und liegt
+  damit 10.752 B über dem Budget (Warmup 4.608 B, die beiden Schalter 3.072 B).
+
+## [1.1] – 2026-07-23
+
+> **Kurzfassung:** Tippmodus: Die Antwort wird live getippt, während das Modell streamt; Vier neue Regeln im System-Prompt gegen holprige Sätze
 
 ### Hinzugefügt
 
@@ -124,6 +169,12 @@ Noch keine Änderungen seit `b599514`.
   zurückzugeben; `TrimLeftIn`/`TrimRightIn` ersetzen vier gleiche Schleifen. Beides
   war nötig, um die compat-Variante wieder unter das Budget zu bringen (sie stand
   beim ersten Wurf bei 207.360 B).
+- Standard-Prompt um vier Regeln erweitert: vollständige Sätze ohne
+  weggelassenes Objekt („Die Zeit wird es zeigen", nie „Die Zeit wird zeigen"),
+  feste Wendungen nur in ihrer Standardform, keine hinzuerfundenen Abtönungen
+  („eher", „sogar", „durchaus", „sehr"), und ein Korrekturdurchgang vor der
+  Ausgabe. Als Regeln formuliert und nicht als weitere Tag-Beispiele – mehr
+  Beispiele hatten die Tag-Ausgabe messbar verschlechtert.
 
 ### Bekannte Grenze
 
@@ -131,20 +182,9 @@ Noch keine Änderungen seit `b599514`.
   Verbindung mitten in der Antwort ab, bleibt der halbe Text stehen. Die Meldung
   sagt das auch. Die Zwischenablage bekommt im Tippmodus nie die Antwort zu sehen.
 
-## 2026-07-23 – Prompt-Regeln zu Grammatik und Wortwahl (`d840096`)
+## [1.0] – 2026-07-23
 
-### Geändert
-
-- Standard-Prompt um vier Regeln erweitert: vollständige Sätze ohne
-  weggelassenes Objekt („Die Zeit wird es zeigen", nie „Die Zeit wird zeigen"),
-  feste Wendungen nur in ihrer Standardform, keine hinzuerfundenen Abtönungen
-  („eher", „sogar", „durchaus", „sehr"), und ein Korrekturdurchgang vor der
-  Ausgabe. Als Regeln formuliert und nicht als weitere Tag-Beispiele – mehr
-  Beispiele hatten die Tag-Ausgabe messbar verschlechtert.
-- Größenangaben in `main.cpp`, `README.md` und `CLAUDE.md` nachgezogen
-  (Standard-Release 102.400 B).
-
-## 2026-07-23 – Modellwechsel und Zweitversuch (`1ca958c`)
+> **Kurzfassung:** Standardmodell ist `qwen3:4b-instruct`: 1–4 s statt 14–27 s; Die Token-Grenzen richten sich nach der Textlänge; Ein Zweitversuch rettet leere Antworten denkender Modelle
 
 ### Geändert
 
@@ -163,7 +203,9 @@ Noch keine Änderungen seit `b599514`.
   mit `capLength=false` nach (`HitTokenLimit()` + `ContentIsEmpty()`, bewusst ohne
   Tag-Extraktion).
 
-## 2026-07-23 – Erste Fassung (`fdca91e`)
+## [0.9] – 2026-07-23
+
+> **Kurzfassung:** Erste Fassung: Tray-Icon, globaler Hotkey, WinHTTP-Anbindung an die Ollama-API; Einstellungsdialog mit Verbindungstest und Modell-Liste; Handgeschriebener JSON-Umgang statt Bibliothek
 
 ### Hinzugefügt
 

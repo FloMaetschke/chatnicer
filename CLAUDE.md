@@ -47,25 +47,88 @@ je verschoben, muss sie dort mit. Für die compat-Variante ist die Prüfung übe
 bewusst 10.752 B darüber liegt (siehe unten); sobald sie wieder unter das Budget
 kommt, gehört der Schalter auf `'true'`.
 
-**Jeder Push auf `main` veröffentlicht.** Ein dritter Job hängt `ChatNicer.exe` an
-das rollende Prerelease `latest` – Tag und Assets werden dabei ersetzt, die
-Release-Notes enthalten Commit, Größe und SHA256 (das README verweist darauf, die
-EXE ist unsigniert). Punkte, die daran hängen:
+**Jeder Push auf `main` veröffentlicht ein Release `v1.x`.** Ein dritter Job
+vergibt die nächste Nummer, schreibt Changelog und Landingpage fort, committet
+beides zurück nach `main` und hängt `ChatNicer.exe` an den neuen Tag. Die
+Fleißarbeit steckt in `.github/scripts/Publish-Release.ps1`; im YAML steht nur,
+was ohne GitHub-Token nicht ginge. Punkte, die daran hängen:
 
 - Der Job läuft **nur nach beiden grünen Build-Jobs** (`needs`) und nur bei
   `push` auf `main` – ein Fork-PR bekommt so nie `contents: write` in die Hand.
-- **`cancel-in-progress` ist auf `main` abgeschaltet.** Wird ein Lauf zwischen
-  `gh release delete --cleanup-tag` und `gh release create` abgeschossen, steht das
-  Repo ohne `latest` da. PR-Läufe dürfen sich weiter gegenseitig ersetzen.
-- Gelöscht **und** neu erstellt wird bewusst: ein bloßes Asset-Update ließe den Tag
-  `latest` auf dem alten Commit stehen.
+  Ein `workflow_dispatch` veröffentlicht **nicht**; wer ein Release will, pusht.
+- **Die nächste Nummer ist das Maximum aus `v1.*`-Tags und den Abschnitten im
+  `CHANGELOG.md`, plus eins.** Beide Quellen zu befragen ist Absicht: Die
+  Versionen 0.9 bis 1.2 existieren nur im Changelog (sie stammen aus der Zeit vor
+  der Automatik), und ein von Hand gesetzter Tag soll trotzdem gelten. Einen
+  Sprung auf 2.0 macht man, indem man `v2.0` von Hand taggt – ab dann zählt das
+  Skript von dort weiter.
+- **Erst committen, dann taggen.** Der Release-Commit (`[skip ci]`, Autor
+  `github-actions[bot]`) enthält nur `CHANGELOG.md` und `docs/index.html`; der Tag
+  zeigt auf ihn und nicht auf den Build-Commit. Nur weil dieser Commit den Code
+  nicht anfasst, ist die veröffentlichte EXE trotzdem der Stand des Tags – wer
+  dort je etwas anderes hineinschreibt, bricht genau diese Zusage.
+- **`cancel-in-progress` ist auf `main` abgeschaltet**, und der Release-Job hat
+  zusätzlich eine eigene Concurrency-Gruppe: Zwei schnell aufeinanderfolgende
+  Pushes würden sonst dieselbe Nummer vergeben.
 - Der Commit-Titel kommt aus `git log`, nicht aus `github.event.head_commit.message` –
   eine Commit-Message in den Skripttext zu interpolieren ist der klassische Weg,
   sich Fremdcode in den Runner zu holen.
+- Die Releases sind **keine Prereleases** mehr. Damit zeigt
+  `…/releases/latest/download/ChatNicer.exe` von selbst auf die neueste Version;
+  der frühere Tag `latest` stand diesem GitHub-eigenen Begriff nur im Weg. Der
+  Aufräumschritt am Ende des Jobs löscht ihn einmalig und kann danach entfallen.
 - Die compat-Variante wird **nicht** veröffentlicht; sie liegt nur im Build-Artefakt.
 
-Wer stattdessen versionierte Releases will, hängt den Job an `push: tags: ['v*']`
-und ersetzt den festen Tag `latest` durch `github.ref_name`.
+Schlägt der Push fehl (geschützter Branch), bricht der Job ab, **bevor** getaggt
+wird – es entsteht dann kein Release ohne passenden Changelog-Eintrag.
+
+### Changelog und Versionen
+
+`CHANGELOG.md` ist keine Kür, sondern Eingabe für die CI. Wer etwas ändert,
+**trägt es vor dem Push unter `## [Unveröffentlicht]` ein.** Beim Release wird
+genau dieser Abschnitt zu `## [1.x] – Datum`, und ein frischer, leerer Abschnitt
+rückt nach.
+
+Jeder Abschnitt beginnt mit `> **Kurzfassung:** a; b; c`. Diese Zeile ist kein
+Schmuck: Die Landingpage baut ihre Versionsliste daraus und trennt an `;`. Jeder
+Punkt fängt deshalb groß an und steht für sich – er landet als `<li>` auf der
+Seite, nicht im Fließtext.
+
+Bleibt „Unveröffentlicht" leer, **veröffentlicht die CI trotzdem** und füllt den
+Abschnitt mit den Commit-Titeln seit dem letzten Tag (`::warning::` in der
+Zusammenfassung). Das ist der Notnagel, nicht der Normalfall: Ein Tippfehler-Fix
+soll keinen Push blockieren, aber „Groessenangaben nachgezogen" als einziger
+Changelog-Eintrag ist niemandem eine Hilfe.
+
+### Landingpage (`docs/`)
+
+`docs/index.html` ist eine einzelne Datei ohne Build-Schritt (GitHub Pages, CNAME
+`chatnicer.de`). Version, Größen, Prüfsumme, Download-Links und die Versionsliste
+pflegt die CI – **von Hand geänderte Werte sind beim nächsten Push wieder weg.**
+Gesteuert wird das über Kommentar-Marker im HTML:
+
+| Marker | Inhalt |
+|---|---|
+| `cn:version` | `1.3` |
+| `cn:size-bytes` / `cn:size-kb` | Größe der gebauten `ChatNicer.exe` |
+| `cn:size-compat` | Größe der compat-Variante |
+| `cn:sha256` | Prüfsumme des Release-Assets |
+| `cn:releases` | komplette Versionsliste aus dem CHANGELOG |
+
+Dazu ohne Marker, weil in Attributen kein Kommentar stehen kann: die KB-Angabe in
+den drei `description`-Metatags und jeder `releases/download/vX.Y/ChatNicer.exe`.
+
+**Fehlt ein Marker, bricht der Release-Job ab.** Das ist so gewollt – eine
+Landingpage, die still veraltete Zahlen zeigt, ist schlimmer als ein roter Lauf.
+Wer im HTML umbaut, lässt die Marker also stehen und prüft mit einem Trockenlauf:
+
+```powershell
+.\.github\scripts\Publish-Release.ps1 -ExePath build\ChatNicer.exe -DryRun
+```
+
+Das Skript ist **UTF-8 mit BOM** gespeichert. Ohne BOM liest Windows PowerShell
+5.1 es als ANSI, und die Umlaute darin zerlegen den Parser – auf dem Runner
+(`pwsh`, PowerShell 7) fällt das nicht auf, lokal sofort.
 
 **Läuft ChatNicer noch, scheitert der Link mit `LNK1104`.** Vor jedem Build:
 

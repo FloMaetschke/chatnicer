@@ -8,6 +8,13 @@ das Modell sie schreibt.
 Keine externen Abhängigkeiten – kein .NET, kein curl, keine JSON-Bibliothek, kein
 VC++-Redistributable. Der Text verlässt den Rechner nicht.
 
+**[ChatNicer.exe herunterladen](https://github.com/FloMaetschke/chatnicer/releases/latest/download/ChatNicer.exe)**
+– immer die neueste Version, eine Datei, kein Installer. Alle Versionen samt
+Prüfsumme stehen unter [Releases](https://github.com/FloMaetschke/chatnicer/releases),
+das Wichtigste in Kurzform auf [chatnicer.de](https://chatnicer.de/). Bitte den
+Abschnitt [Erster Start & Windows-Warnungen](#erster-start--windows-warnungen)
+lesen: Die EXE ist unsigniert.
+
 ---
 
 ## Ablauf
@@ -155,7 +162,10 @@ korrigiert.
 | `network.h` | WinHTTP, Ollama-API, JSON-Erzeugung und -Auswertung, Streaming-Filter |
 | `ChatNicer.sln` / `.vcxproj` | Visual-Studio-2022-Projekt (x64, Debug + Release) |
 | `build.bat` | Build ohne IDE – sucht die VS-Buildtools selbstständig |
-| `CHANGELOG.md` | Änderungen, nach Datum und Commit gegliedert |
+| `CHANGELOG.md` | Änderungen, nach Version gegliedert – Eingabe für die Veröffentlichung |
+| `docs/index.html` | Landingpage ([chatnicer.de](https://chatnicer.de/)), eine Datei ohne Build-Schritt |
+| `.github/workflows/build.yml` | Bauen, Größe prüfen, veröffentlichen |
+| `.github/scripts/Publish-Release.ps1` | Vergibt die Versionsnummer und zieht Changelog und Landingpage nach |
 | `LICENSE` | MIT-Lizenz |
 
 Die Icons werden zur Laufzeit gezeichnet, deshalb gibt es **keine `.rc`-Datei**.
@@ -480,10 +490,25 @@ Zu den beiden neuen Schaltern geprüft:
 
 ---
 
-## Änderungen
+## Änderungen und Versionen
 
-Was sich wann geändert hat, steht im [CHANGELOG.md](CHANGELOG.md). Versionsnummern
-gibt es noch keine – jeder Push auf `main` ersetzt das rollende Prerelease `latest`.
+Was sich wann geändert hat, steht im [CHANGELOG.md](CHANGELOG.md).
+
+**Jeder Push auf `main` wird ein Release `v1.x`** – die zweite Stelle zählt
+fortlaufend hoch (`1.3`, `1.4`, … `1.10`). Das übernimmt die CI: Sie baut beide
+Varianten, prüft das Größenbudget, vergibt die nächste freie Nummer, macht aus
+dem Abschnitt „Unveröffentlicht" den Abschnitt der neuen Version, trägt Größe,
+Prüfsumme und Links auf der Landingpage nach und lädt `ChatNicer.exe` als Asset
+hoch. Veröffentlicht wird nur, wenn beide Build-Jobs grün sind.
+
+Die Versionen **0.9 bis 1.2** stammen aus der Zeit davor: Sie sind im Changelog
+dokumentiert, haben aber kein Release und kein Tag.
+
+Der Download-Link
+[`releases/latest/download/ChatNicer.exe`](https://github.com/FloMaetschke/chatnicer/releases/latest/download/ChatNicer.exe)
+zeigt immer auf die neueste Version. Auf der Landingpage steht bewusst der Link
+zur **konkreten** Version – dort daneben steht eine Prüfsumme, und die gehört zu
+genau einer Datei.
 
 ---
 

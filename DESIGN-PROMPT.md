@@ -3,6 +3,18 @@
 Diese Datei ist als Prompt gedacht: Inhalt kopieren und Claude (Design/Artifact)
 übergeben. Alles unterhalb von „**Prompt beginnt hier**" ist der Prompt selbst.
 
+> **Stand: historisch.** Die Seite steht seit dem ersten Wurf in
+> [`docs/index.html`](docs/index.html), und Version, Größen, Prüfsumme,
+> Download-Links und Versionsliste pflegt seit v1.3 die CI
+> ([`Publish-Release.ps1`](.github/scripts/Publish-Release.ps1)). Die Zahlen in
+> diesem Prompt sind deshalb der Stand von damals und **nicht mehr die Wahrheit** –
+> maßgeblich sind die gebaute EXE und `CHANGELOG.md`.
+>
+> Wer die Seite hiermit neu bauen lässt, muss die Kommentar-Marker
+> (`cn:version`, `cn:size-bytes`, `cn:size-kb`, `cn:size-compat`, `cn:sha256`,
+> `cn:releases`) wieder einsetzen: Fehlt einer, bricht der Release-Job ab. Siehe
+> `CLAUDE.md`, Abschnitt „Landingpage (`docs/`)".
+
 ---
 
 # Prompt beginnt hier
