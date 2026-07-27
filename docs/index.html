@@ -128,6 +128,14 @@ font-size:.93rem; overflow-wrap:anywhere}
 .arrow{align-self:center; color:var(--fg-2)}
 .note{font-size:.87rem; color:var(--fg-2); margin:.1rem 0 0}
 
+/* reply suggestions popup */
+.sug{max-width:31rem; margin:0 0 1.1rem; padding:.75rem; border:1px solid var(--line);
+border-radius:var(--radius); background:var(--bg-2); display:grid; gap:.45rem}
+.sug-h{font-size:.7rem; letter-spacing:.07em; text-transform:uppercase; color:var(--fg-2)}
+.sug-i{padding:.55rem .75rem; border:1px solid var(--line); border-radius:calc(var(--radius) - .15rem);
+background:var(--bg); font-size:.93rem; overflow-wrap:anywhere}
+.sug-i.pick{background:var(--blue-2); border-color:color-mix(in srgb,var(--blue) 35%,var(--line))}
+
 /* feature list */
 .feat{display:grid; grid-template-columns:repeat(auto-fit,minmax(15rem,1fr)); gap:.1rem 2.2rem; margin:0; padding:0; list-style:none}
 .feat li{padding:.7rem 0; border-bottom:1px solid var(--line)}
@@ -211,6 +219,7 @@ footer ul{display:flex; flex-wrap:wrap; gap:.4rem 1.1rem; margin:0 0 .5rem; padd
 ChatNicer</a>
 <nav aria-label="Abschnitte">
 <a href="#funktion">So funktioniert’s</a>
+<a href="#antworten">Antwortvorschläge</a>
 <a href="#installation">Installation</a>
 <a href="#details">Details</a>
 </nav>
@@ -228,7 +237,7 @@ ChatNicer</a>
 <section class="hero">
 <div class="wrap">
 <h1>Besser formulieren, ohne das Fenster zu wechseln.</h1>
-<p class="sub">ChatNicer ersetzt markierten Text per Hotkey durch eine bessere Fassung – gerechnet von einem lokalen Ollama-Modell, überall in Windows.</p>
+<p class="sub">ChatNicer ersetzt markierten Text per Hotkey durch eine bessere Fassung – gerechnet von einem lokalen Ollama-Modell, überall in Windows. In Teams und Discord schlägt es auf Wunsch auch gleich die Antwort vor.</p>
 <div class="actions">
 <a class="btn btn-p btn-lg" href="https://github.com/FloMaetschke/chatnicer/releases/download/v1.6/ChatNicer.exe">ChatNicer.exe herunterladen</a>
 <a class="btn btn-s btn-lg" href="https://github.com/FloMaetschke/chatnicer">Auf GitHub ansehen</a>
@@ -289,11 +298,36 @@ ChatNicer</a>
 <div class="ba-cell after"><span class="tag">eingefügt</span>So funktioniert das leider nicht, hier ist etwas schiefgelaufen.</div>
 </div>
 </div>
-<p class="note">Beim zweiten Beispiel ist der Punkt: Die Bitte wird <strong>umformuliert, nicht beantwortet</strong>. Genau daran scheitern kleine Modelle sonst – wie das verhindert wird, steht in <a href="#details">Abschnitt&nbsp;7</a>.</p>
+<p class="note">Beim zweiten Beispiel ist der Punkt: Die Bitte wird <strong>umformuliert, nicht beantwortet</strong>. Genau daran scheitern kleine Modelle sonst – wie das verhindert wird, steht in <a href="#details">Abschnitt&nbsp;8</a>.</p>
 </div>
 </section>
 
-<!-- 3 Was es kann -->
+<!-- 3 Antwortvorschlaege -->
+<section id="antworten">
+<div class="wrap">
+<h2>Antworten vorschlagen lassen</h2>
+<p class="lead">In Teams und Discord: <kbd>STRG</kbd>&nbsp;+&nbsp;<kbd>ALT</kbd>&nbsp;+&nbsp;<kbd>Leertaste</kbd> im offenen Chat. ChatNicer liest die letzten Nachrichten und legt drei Antworten über das Eingabefeld – ein Klick fügt die gewählte ein. Abgeschickt wird nichts.</p>
+
+<div class="sug">
+<div class="sug-h">Antwort auf: Rocky</div>
+<div class="sug-i pick">Passt, dann machen wir das so.</div>
+<div class="sug-i">Klingt gut – wann brauchst du das denn?</div>
+<div class="sug-i">Da komme ich diese Woche leider nicht dazu.</div>
+</div>
+<p class="note">Drei Vorschläge, die sich in der Haltung unterscheiden – zustimmen, nachfragen, absagen –, nicht dreimal derselbe Satz.</p>
+
+<p style="margin:1.6rem 0 .6rem">Gelesen wird über dieselbe Barrierefreiheits-Schnittstelle, die auch ein Screenreader nutzt. Der Umfang ist bewusst eng gefasst:</p>
+<ul class="feat">
+<li><b>Nur das Vordergrundfenster</b><span>Und nur, wenn es Teams oder Discord ist. Sonst passiert stillschweigend nichts.</span></li>
+<li><b>Nur der offene Chat</b><span>Die Chatliste in der Seitenleiste wird nie gelesen – nur die eine Unterhaltung, die gerade auf dem Bildschirm steht.</span></li>
+<li><b>Nur die letzten Nachrichten</b><span>Voreingestellt acht, einstellbar. Der Gesprächsfaden, nicht das Archiv.</span></li>
+<li><b>Nur auf Tastendruck</b><span>Ohne Hotkey liest ChatNicer gar nichts. <kbd>ESC</kbd> schließt die Vorschläge wieder.</span></li>
+</ul>
+<p class="note" style="margin-top:1rem"><strong>Discord braucht einen Startschalter:</strong> Anders als Teams baut es seinen Barrierefreiheits-Baum nicht von selbst auf. Discord muss einmal mit <code class="i">--force-renderer-accessibility</code> gestartet werden – am einfachsten, indem der Schalter in der Verknüpfung hinter den Pfad kommt. Fehlt er, sagt ChatNicer das im Klartext.</p>
+</div>
+</section>
+
+<!-- 4 Was es kann -->
 <section id="funktionen">
 <div class="wrap">
 <h2>Was es kann</h2>
@@ -306,8 +340,9 @@ ChatNicer</a>
 <li><b>Zwei Modi</b><span>Einfügen (Antwort kommt fertig über die Zwischenablage) oder Live tippen (Streaming, ~1,3 s für 271 Zeichen).</span></li>
 <li><b>Warmup beim Start</b><span>Lädt das Modell mit einer leeren Anfrage in Ollamas Speicher – spart der ersten echten Anfrage rund 4 Sekunden.</span></li>
 <li><b>Freier Hotkey</b><span>Voreingestellt <kbd>STRG</kbd>&nbsp;+&nbsp;<kbd>SHIFT</kbd>&nbsp;+&nbsp;<kbd>Leertaste</kbd>, im Dialog änderbar.</span></li>
+<li><b>Antwortvorschläge</b><span>Drei Antworten zum offenen Chat in Teams und Discord, per Klick eingefügt – <a href="#antworten">siehe oben</a>.</span></li>
 <li><b>Modellauswahl</b><span>Auswahlliste aus den Modellen, die auf dem Rechner tatsächlich installiert sind.</span></li>
-<li><b>Eigener System-Prompt</b><span>Ebenso Temperature und Timeout – gespeichert in einer <code class="i">config.ini</code> neben der EXE.</span></li>
+<li><b>Eigene System-Prompts</b><span>Einer fürs Umformulieren, einer für die Antwortvorschläge – dazu Temperature und Timeout, gespeichert in einer <code class="i">config.ini</code> neben der EXE.</span></li>
 <li><b>Zwischenablage bleibt heil</b><span>Der vorherige Inhalt wird nach dem Einfügen wiederhergestellt, auch auf jedem Fehlerpfad.</span></li>
 <li><b>Verbindungstest</b><span>Ein Klick im Einstellungsdialog prüft, ob Ollama erreichbar ist und das Modell antwortet.</span></li>
 <li><b>Statusanzeige im Tray</b><span>Das Icon zeigt jederzeit, woran das Programm gerade ist (siehe oben).</span></li>
@@ -316,7 +351,7 @@ ChatNicer</a>
 </div>
 </section>
 
-<!-- 4 Installation -->
+<!-- 5 Installation -->
 <section id="installation">
 <div class="wrap">
 <h2>Installation</h2>
@@ -340,7 +375,7 @@ ChatNicer</a>
 </div>
 </section>
 
-<!-- 5 Lokal und privat -->
+<!-- 6 Lokal und privat -->
 <section id="privat">
 <div class="wrap">
 <h2>Lokal und privat</h2>
@@ -349,7 +384,7 @@ ChatNicer</a>
 </div>
 </section>
 
-<!-- 6 Download -->
+<!-- 7 Download -->
 <section id="download">
 <div class="wrap">
 <h2>Download</h2>
@@ -419,7 +454,7 @@ ChatNicer</a>
 </div>
 </section>
 
-<!-- 7 Details -->
+<!-- 8 Details -->
 <section id="details">
 <div class="wrap">
 <h2>Details für Interessierte</h2>

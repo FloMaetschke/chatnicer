@@ -25,7 +25,67 @@ Die Größenangaben sind gemessene Werte des Standard-Release
 
 ## [Unveröffentlicht]
 
-_Noch nichts eingetragen. Wer etwas ändert, schreibt es hierhin – der nächste Push auf `main` macht daraus Version 1.7._
+> **Kurzfassung:** Neuer Hotkey STRG+ALT+SPACE schlägt Antworten auf den offenen Chat in Teams und Discord vor; ChatNicer liest den Verlauf wie ein Screenreader über die Accessibility-Schnittstelle; die Vorschläge erscheinen als Sprechblasen über dem Eingabefeld und werden per Klick eingefügt; das Einstellungsfenster hat jetzt Registerkarten und lässt sich in der Größe ziehen
+
+### Hinzugefügt
+
+- **Antwortvorschläge für Teams und Discord** (`chatread.h`, neuer Hotkey
+  `STRG+ALT+SPACE`). ChatNicer liest den zuletzt sichtbaren Teil des offenen
+  Chats, fragt das Modell nach drei Antworten und zeigt sie als Sprechblasen
+  über dem Eingabefeld. Ein Klick fügt die gewählte Antwort dort ein.
+- Gelesen wird über MSAA am Kindfenster `Chrome_RenderWidgetHostHWND`. Teams und
+  Discord sind beide Chromium-Anwendungen, deshalb genügt **eine** Codeschiene;
+  UI Automation wird nicht gebraucht.
+- Der Umfang ist bewusst eng gefasst: nur das Vordergrundfenster, darin nur der
+  *eine* geöffnete Chat (über einen benannten Anker – Teams `Nachrichtenliste`,
+  Discord `Nachrichten in <Chat>`), und davon nur die letzten `ReplyContext`
+  Nachrichten (Standard 8). Die Chatliste der Seitenleiste wird nie gelesen.
+- Ist kein Chat geöffnet oder liegt ein anderes Programm im Vordergrund, tut der
+  Hotkey stillschweigend nichts.
+- Das Popup schließt sich per **ESC**, per Rechtsklick, sobald ein anderes
+  Fenster in den Vordergrund kommt, und spätestens nach 45 Sekunden.
+- Neue Einstellungen: eigener Hotkey, Schalter „Antwortvorschläge in Teams und
+  Discord anbieten", die Zahl der gelesenen Nachrichten und ein **eigener,
+  bearbeitbarer System-Prompt** für die Vorschläge. INI-Schlüssel `ReplyHotkey`,
+  `ReplyEnabled`, `ReplyContext`, `ReplyPrompt`.
+- **Registerkarten im Einstellungsfenster** („Verbindung", „Umformulieren",
+  „Antwortvorschläge"). Der Dialog schrumpft dadurch von 683 auf 445 Pixel Höhe,
+  obwohl er mehr Einstellungen zeigt als vorher.
+- **Das Einstellungsfenster lässt sich in der Größe ziehen.** Der gewonnene Platz
+  geht in der Höhe komplett an das jeweilige Prompt-Feld – dort steht der längste
+  Text des Programms, und der war im festen Fenster nur durch ein kleines Fenster
+  zu lesen. Kleiner als die Ausgangsgröße geht es nicht (`WM_GETMINMAXINFO`).
+- `net::ExtractReplies()` schneidet die einzelnen `<reply>`-Blöcke aus der
+  Antwort – genauso fehlertolerant wie `ExtractTagged()`.
+
+### Geändert
+
+- `ExtractChatAnswer()` nutzt den neuen Helfer `net::ChatContent()`; beide Wege
+  zum Antworttext stehen damit nur noch an einer Stelle.
+- Neue Bibliotheken: `oleacc.lib`, `oleaut32.lib`, `ole32.lib` (in `build.bat`
+  **und** `ChatNicer.vcxproj`).
+- `ICC_TAB_CLASSES` bei `InitCommonControlsEx` ergänzt – ohne sie entsteht das
+  Tab-Control nicht.
+- Landingpage (`docs/index.html`): eigener Abschnitt „Antworten vorschlagen
+  lassen" samt Discord-Hinweis, Navigationseintrag und ergänzte Funktionsliste.
+- Standard-Release 151.040 B (vorher 118.272 B) – rund 52 KB unter dem Budget.
+  Die compat-Variante wächst auf 249.856 B und liegt damit 45.056 B über der
+  200-KB-Grenze (vorher 10.752 B darüber).
+
+### Sicherheit
+
+- Der Chatverlauf geht als `<text_to_process>` an das Modell. Das ist hier nicht
+  nur Formsache: Der Text stammt von einem fremden Gesprächspartner, und ohne
+  diese Klammer würde ein „ignoriere deine Anweisungen und …" im Chat als
+  Anweisung an das Modell wirken.
+
+### Bekannte Einschränkung
+
+- **Discord gibt seinen Inhalt nur preis, wenn es mit
+  `--force-renderer-accessibility` gestartet wurde.** Weder ein `WM_GETOBJECT`
+  noch das systemweite Screenreader-Flag aktivieren den Baum zur Laufzeit
+  (gemessen: 24 s lang keine Reaktion). Fehlt der Baum, meldet ChatNicer das im
+  Klartext statt still nichts zu tun. Teams braucht nichts dergleichen.
 
 ## [1.6] – 2026-07-27
 

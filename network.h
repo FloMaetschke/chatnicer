@@ -376,19 +376,72 @@ inline std::wstring ExtractTagged(const std::wstring& in) {
     return out;
 }
 
+// Der rohe Antworttext aus der Ollama-Antwort, ohne jede Tag-Auswertung.
+// Gezielt innerhalb von "message" gesucht, damit ein vorangehendes "thinking"
+// nicht stoert.
+inline bool ChatContent(const std::wstring& body, std::wstring& out) {
+    const size_t msg = body.find(L"\"message\"");
+    if (msg != std::wstring::npos && JsonFindStringFrom(body, L"content", msg, out)) return true;
+    if (JsonFindString(body, L"content",  out)) return true;
+    if (JsonFindString(body, L"response", out)) return true;   // /api/generate
+    return false;
+}
+
 // Liefert message.content aus der Ollama-Antwort, bereinigt um Denkprozess
 // und XML-Rahmen.
 inline std::wstring ExtractChatAnswer(const std::wstring& body) {
     std::wstring val;
-    // gezielt innerhalb von "message" suchen, damit z. B. "thinking" nicht stoert
-    const size_t msg = body.find(L"\"message\"");
-    if (msg != std::wstring::npos && JsonFindStringFrom(body, L"content", msg, val))
-        return ExtractTagged(StripThinking(val));
-    if (JsonFindString(body, L"content", val))
-        return ExtractTagged(StripThinking(val));
-    if (JsonFindString(body, L"response", val))   // /api/generate
-        return ExtractTagged(StripThinking(val));
-    return std::wstring();
+    if (!ChatContent(body, val)) return std::wstring();
+    return ExtractTagged(StripThinking(val));
+}
+
+// Schneidet die einzelnen <reply>-Bloecke der Vorschlagsantwort heraus
+// (zweiter Hotkey, siehe cfg::kReplyPrompt).
+//
+// Tolerant wie ExtractTagged: ein fehlendes ">" oder ein fehlendes schliessendes
+// Tag darf den Vorschlag nicht kosten. Liefert das Modell gar keine Tags, gilt
+// die ganze Antwort als ein einzelner Vorschlag - eine Schaltflaeche ist immer
+// noch besser als eine leere Auswahl.
+inline std::vector<std::wstring> ExtractReplies(const std::wstring& body, size_t maxCount) {
+    std::vector<std::wstring> out;
+    std::wstring raw;
+    if (!ChatContent(body, raw)) return out;
+
+    const std::wstring text = StripThinking(raw);
+    const size_t openLen = 6;                       // Laenge von "<reply"
+
+    size_t pos = 0;
+    while (out.size() < maxCount) {
+        const size_t open = text.find(L"<reply", pos);
+        if (open == std::wstring::npos) break;
+
+        size_t start = open + openLen;
+        if (start < text.size() && text[start] == L'>') {
+            ++start;
+        } else {
+            // "<reply attr=..>" oder ein vergessenes ">" - nur in der Naehe suchen,
+            // sonst verschluckt ein spaeteres ">" den halben Text.
+            const size_t gt = text.find(L'>', open);
+            if (gt != std::wstring::npos && gt - open <= 24) start = gt + 1;
+        }
+
+        const size_t close = text.find(L"</reply", start);
+        const size_t stop  = (close == std::wstring::npos) ? text.size() : close;
+
+        std::wstring one = Trim(text.substr(start, stop - start));
+        StripStrayFrame(one);
+        if (!one.empty()) out.push_back(one);
+
+        if (close == std::wstring::npos) break;
+        pos = close + 7;
+    }
+
+    if (out.empty()) {
+        std::wstring one = Trim(text);
+        StripStrayFrame(one);
+        if (!one.empty()) out.push_back(one);
+    }
+    return out;
 }
 
 // -------------------------------------------------------------------------------------

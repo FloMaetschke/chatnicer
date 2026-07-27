@@ -9,17 +9,23 @@
 //  Konfiguriert werden nur Ollama-URL (Standard http://localhost:11434) und der
 //  Modellname in Ollama-Schreibweise (Standard qwen3:4b-instruct).
 //
+//  Ein zweiter Hotkey (Standard: STRG+ALT+SPACE) liest den offenen Chat des
+//  Vordergrundfensters - Teams oder Discord, ueber die Accessibility-Schnittstelle
+//  wie ein Screenreader (chatread.h) - und bietet drei Antworten als Sprechblasen
+//  ueber dem Eingabefeld an. Ein Klick fuegt die gewaehlte Antwort dort ein.
+//
 //  Beim Start laedt ChatNicer das Modell vorab in den Ollama-Speicher (Warmup,
 //  siehe WarmupProc/net::Warmup) und meldet das Ergebnis ueber das Tray-Icon.
 //  Der Autostart mit Windows haengt an HKCU\...\Run (cfg::SetAutostart), nicht an
 //  der config.ini - Windows liest die Registry, also ist sie die Wahrheit.
 //
-//  Keine externen Abhaengigkeiten: nur Win32 + WinHTTP (beides Teil von Windows).
+//  Keine externen Abhaengigkeiten: nur Win32, WinHTTP und die Accessibility-API
+//  (oleacc) - alles Teil von Windows.
 //
 // -------------------------------------------------------------------------------------
 //  BUILD (x64 Native Tools Command Prompt for VS 2022) - oder einfach: build.bat
 //
-//  Release, 118.272 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
+//  Release, 151.040 Bytes (gemessen, VS 2022 17.x / Windows SDK 10.0.26100):
 //
 //    cl /nologo /std:c++17 /permissive- /W4 /MT /utf-8 /EHs-c- /D_HAS_EXCEPTIONS=0 ^
 //       /O1 /Os /Oi /Oy /Gy /Gw /GL /GR- /GS- /Zc:inline /Zc:threadSafeInit- ^
@@ -28,7 +34,8 @@
 //       /link /LTCG /OPT:REF /OPT:ICF /INCREMENTAL:NO /SUBSYSTEM:WINDOWS /RELEASE ^
 //       /MANIFEST:EMBED /NODEFAULTLIB:libucrt.lib /DEFAULTLIB:ucrt.lib ^
 //       /OUT:ChatNicer.exe ^
-//       user32.lib gdi32.lib shell32.lib comctl32.lib winhttp.lib advapi32.lib
+//       user32.lib gdi32.lib shell32.lib comctl32.lib winhttp.lib advapi32.lib ^
+//       oleacc.lib oleaut32.lib ole32.lib
 //
 //  Bedeutung der wichtigsten Flags:
 //    /O1 /Os              Optimierung auf Codegroesse statt Geschwindigkeit
@@ -45,9 +52,11 @@
 //                         Windows 10 zum Betriebssystem -> KEIN VC++-Redist erforderlich.
 //
 //  Groessenvergleich derselben Quelle (gemessen):
-//    komplett statische CRT, mit Exceptions (/MT /EHsc) ... 215.552 B - maximal robust
-//    obige Release-Konfiguration .......................... 118.272 B - Standard
-//    dynamische CRT (/MD) ................................. 106.496 B - braucht VC++-Redist
+//    komplett statische CRT, mit Exceptions (/MT /EHsc) ... 249.856 B - maximal robust
+//    obige Release-Konfiguration .......................... 151.040 B - Standard
+//
+//  Die compat-Variante liegt damit deutlich ueber dem 200-KB-Budget; der
+//  Standard-Release hat rund 52 KB Reserve (siehe CLAUDE.md).
 //
 //  Hinweis zu _HAS_EXCEPTIONS=0: bei Speichermangel bricht die STL hart ab, statt
 //  std::bad_alloc zu werfen. Fuer ein Tool dieser Groesse akzeptabel - wer das nicht
@@ -79,6 +88,7 @@
 
 #include "config.h"
 #include "network.h"
+#include "chatread.h"
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -100,6 +110,7 @@ static const wchar_t* kAppName    = L"ChatNicer";
 static const wchar_t* kVersion    = L"1.1";
 static const wchar_t* kWndClass   = L"ChatNicerHiddenWnd";
 static const wchar_t* kCfgClass   = L"ChatNicerSettingsWnd";
+static const wchar_t* kReplyClass = L"ChatNicerReplyWnd";
 static const wchar_t* kMutexName  = L"Local\\ChatNicer_SingleInstance";
 
 #define WM_TRAYICON     (WM_APP + 1)   // Tray-Callback
@@ -108,12 +119,17 @@ static const wchar_t* kMutexName  = L"Local\\ChatNicer_SingleInstance";
 #define WM_APP_TESTDONE (WM_APP + 4)   // lParam = std::wstring* (Testergebnis)
 #define WM_APP_MODELS   (WM_APP + 5)   // lParam = std::vector<std::wstring>* (Modelliste)
 #define WM_APP_WARMUP   (WM_APP + 6)   // wParam = ok?, lParam = std::wstring* (Meldung)
+#define WM_APP_REPLIES  (WM_APP + 7)   // lParam = ReplyResult* (Antwortvorschlaege)
 
 enum { IDM_SETTINGS = 40001, IDM_ABOUT, IDM_EXIT };
 enum { IDC_URL = 1001, IDC_MODEL, IDC_PROMPT, IDC_KEY, IDC_HOTKEY,
+       IDC_REPLYKEY, IDC_REPLYON, IDC_REPLYPROMPT, IDC_REPLYCTX,
        IDC_TYPING, IDC_RESTORE, IDC_WARMMSG, IDC_AUTOSTART,
-       IDC_TEST, IDC_SAVE, IDC_CANCEL };
-enum { HOTKEY_ID = 1 };
+       IDC_TAB, IDC_TEST, IDC_SAVE, IDC_CANCEL };
+
+// Registerkarten des Einstellungsfensters
+enum { PAGE_CONNECT = 0, PAGE_REWRITE, PAGE_REPLY, PAGE_COUNT };
+enum { HOTKEY_ID = 1, HOTKEY_REPLY = 2 };
 
 enum TrayState { STATE_IDLE = 0, STATE_BUSY = 1, STATE_ERROR = 2 };
 
@@ -130,6 +146,29 @@ static cfg::Config     g_cfg;
 static volatile LONG   g_busy      = 0;
 static UINT            g_msgTaskbarCreated = 0;
 static bool            g_hotkeyOk  = false;
+static bool            g_replyKeyOk = false;
+static volatile LONG   g_replyBusy = 0;
+// Die Bedienelemente jeder Registerkarte. Sie sind Kinder des Fensters, nicht des
+// Tab-Controls (das kann keine haben) - umgeschaltet wird ueber Sichtbarkeit.
+// Unsichtbare Controls ueberspringt IsDialogMessage von selbst, damit stimmt auch
+// die Tab-Reihenfolge ohne weiteres Zutun.
+//
+// Zu jedem Element wird seine Ausgangsgeometrie mitgeschrieben, denn das Fenster
+// ist groessenveraenderlich: LayoutSettings() rechnet daraus die neue Lage. Die
+// Flags sagen, was mit dem gewonnenen Platz geschehen soll.
+enum {
+    LF_W = 1,   // Breite waechst mit
+    LF_H = 2,   // Hoehe waechst mit (die beiden Prompt-Felder)
+    LF_Y = 4,   // rutscht nach unten, wenn ein Feld darueber gewachsen ist
+    LF_X = 8    // bleibt am rechten Rand (Schaltflaechen)
+};
+
+struct Slot { HWND hwnd; int x, y, w, h; unsigned flags; };
+
+// [PAGE_COUNT] sammelt die Elemente, die auf jeder Karte sichtbar bleiben.
+static std::vector<Slot> g_slots[PAGE_COUNT + 1];
+static int g_baseCX = 0, g_baseCY = 0;   // Client-Groesse, fuer die das Layout gilt
+static int g_minCX  = 0, g_minCY = 0;    // Mindestgroesse des ganzen Fensters
 
 // =====================================================================================
 //  Tray-Icons zur Laufzeit erzeugen (keine .rc-Datei noetig)
@@ -638,7 +677,7 @@ static void RequestModelList(const std::wstring& url, const std::wstring& key) {
 }
 
 // =====================================================================================
-//  Einstellungsfenster (dynamisch erzeugt, ohne Ressourcendatei)
+//  Gemeinsame UI-Helfer
 // =====================================================================================
 static UINT DpiFor(HWND hwnd) {
     typedef UINT (WINAPI *PFN_GetDpiForWindow)(HWND);
@@ -662,84 +701,570 @@ static std::wstring GetText(HWND ctrl) {
     return s;
 }
 
+// =====================================================================================
+//  Antwortvorschlaege (zweiter Hotkey)
+//
+//  Ablauf: Hotkey -> offenen Chat des Vordergrundfensters lesen (chatread.h) ->
+//  Ollama nach drei Antworten fragen -> Vorschlaege als Sprechblasen ueber dem
+//  Eingabefeld anbieten -> ein Klick fuegt den gewaehlten Text dort ein.
+//
+//  Das Popup traegt WS_EX_NOACTIVATE, und daran haengt der ganze Ablauf: Wuerde
+//  es den Fokus nehmen, verloere das Chat-Eingabefeld seinen Cursor und das
+//  anschliessende STRG+V ginge ins Leere. So bleibt der Chat durchgehend das
+//  aktive Fenster - das Popup schwebt nur darueber und faengt Mausklicks ab.
+//
+//  Aus demselben Grund kann das Popup keine Tastendruecke empfangen; ESC wird
+//  deshalb im Timer abgefragt (siehe WM_TIMER). Geschlossen wird per ESC,
+//  Rechtsklick, beim Wechsel des Vordergrundfensters (Timer 3) oder nach
+//  45 Sekunden (Timer 4).
+// =====================================================================================
+struct ReplyResult {
+    std::wstring              title;
+    std::vector<std::wstring> items;
+    std::wstring              error;   // gesetzt = melden; leer = stillschweigend nichts
+};
+
+static std::vector<std::wstring> g_replyItems;
+static std::vector<RECT>         g_replyRects;   // Client-Koordinaten der Sprechblasen
+static std::wstring              g_replyTitle;
+static HWND  g_reply       = nullptr;
+static HWND  g_replyTarget = nullptr;            // Chatfenster, in das eingefuegt wird
+static int   g_replyHot    = -1;                 // Vorschlag unter der Maus
+static HFONT g_replyFont   = nullptr;
+static HFONT g_replyHead   = nullptr;
+static bool  g_replyTrack  = false;              // laeuft ein TrackMouseEvent?
+
+// Den gewaehlten Vorschlag einfuegen. Eigener Thread, weil das Warten auf
+// Zwischenablage und Zielprogramm den UI-Thread sonst sichtbar einfriert.
+struct PasteJob {
+    std::wstring text;
+    HWND         target;
+    bool         restore;
+};
+
+static DWORD WINAPI PasteProc(LPVOID param) {
+    PasteJob* job = static_cast<PasteJob*>(param);
+
+    std::wstring backup;
+    const bool haveBackup = ClipGetText(backup);
+
+    // Der Chat ist wegen WS_EX_NOACTIVATE noch das aktive Fenster; das hier ist
+    // nur die Absicherung, falls doch etwas dazwischengekommen ist.
+    if (job->target && IsWindow(job->target)) {
+        SetForegroundWindow(job->target);
+        Sleep(60);
+    }
+
+    bool ok = ClipSetText(ToCrLf(job->text));
+    if (ok) {
+        Sleep(40);
+        ok = SendCtrlCombo('V');
+        Sleep(300);              // erst einfuegen lassen, dann die Ablage anfassen
+    }
+    if (job->restore && haveBackup) ClipSetText(backup);
+
+    const bool failed = !ok;
+    delete job;
+    if (failed)
+        PostDone(false, L"Einfuegen fehlgeschlagen (Zwischenablage oder SendInput blockiert).");
+    return 0;
+}
+
+static void CloseReplyPopup() {
+    if (g_reply) DestroyWindow(g_reply);
+}
+
+static int ReplyHitTest(POINT pt) {
+    for (size_t i = 0; i < g_replyRects.size(); ++i)
+        if (PtInRect(&g_replyRects[i], pt)) return static_cast<int>(i);
+    return -1;
+}
+
+static void ReplyPaint(HWND hwnd) {
+    PAINTSTRUCT ps;
+    HDC dc = BeginPaint(hwnd, &ps);
+
+    RECT cr;
+    GetClientRect(hwnd, &cr);
+
+    // Doppelpuffer: ohne ihn flackert bei jedem Hover-Wechsel die ganze Flaeche.
+    HDC     mem    = CreateCompatibleDC(dc);
+    HBITMAP bmp    = CreateCompatibleBitmap(dc, cr.right, cr.bottom);
+    HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(mem, bmp));
+
+    const UINT dpi = DpiFor(hwnd);
+    auto S = [dpi](int dip) { return MulDiv(dip, static_cast<int>(dpi), 96); };
+    const int PAD = S(10), BPAD = S(9);
+
+    SetBkMode(mem, TRANSPARENT);
+
+    // Traegerflaeche
+    HBRUSH  back = CreateSolidBrush(RGB(250, 250, 252));
+    HPEN    edge = CreatePen(PS_SOLID, 1, RGB(198, 198, 206));
+    HGDIOBJ ob   = SelectObject(mem, back);
+    HGDIOBJ op   = SelectObject(mem, edge);
+    RoundRect(mem, 0, 0, cr.right, cr.bottom, S(10), S(10));
+    SelectObject(mem, ob);
+    SelectObject(mem, op);
+    DeleteObject(back);
+    DeleteObject(edge);
+
+    // Kopfzeile
+    HGDIOBJ oldFont = SelectObject(mem, g_replyHead);
+    SetTextColor(mem, RGB(104, 102, 100));
+    RECT hr = { PAD, PAD, cr.right - PAD, PAD + S(16) };
+    std::wstring head = L"Antwort auf: " + g_replyTitle;
+    DrawTextW(mem, head.c_str(), -1, &hr,
+              DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+    // Sprechblasen
+    SelectObject(mem, g_replyFont);
+    for (size_t i = 0; i < g_replyRects.size() && i < g_replyItems.size(); ++i) {
+        const bool hot = (static_cast<int>(i) == g_replyHot);
+        HBRUSH bb = CreateSolidBrush(hot ? RGB(237, 241, 252) : RGB(255, 255, 255));
+        HPEN   bp = CreatePen(PS_SOLID, 1, hot ? RGB(98, 100, 167) : RGB(216, 216, 224));
+        HGDIOBJ o1 = SelectObject(mem, bb);
+        HGDIOBJ o2 = SelectObject(mem, bp);
+
+        const RECT& r = g_replyRects[i];
+        RoundRect(mem, r.left, r.top, r.right, r.bottom, S(8), S(8));
+
+        SelectObject(mem, o1);
+        SelectObject(mem, o2);
+        DeleteObject(bb);
+        DeleteObject(bp);
+
+        RECT t = { r.left + BPAD, r.top + BPAD, r.right - BPAD, r.bottom - BPAD };
+        SetTextColor(mem, RGB(32, 31, 30));
+        DrawTextW(mem, g_replyItems[i].c_str(), -1, &t, DT_WORDBREAK | DT_NOPREFIX);
+    }
+    SelectObject(mem, oldFont);
+
+    BitBlt(dc, 0, 0, cr.right, cr.bottom, mem, 0, 0, SRCCOPY);
+
+    SelectObject(mem, oldBmp);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+    EndPaint(hwnd, &ps);
+}
+
+static LRESULT CALLBACK ReplyProcWnd(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_PAINT:
+        ReplyPaint(hwnd);
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;                       // alles Zeichnen erledigt WM_PAINT
+
+    case WM_MOUSEMOVE: {
+        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        const int hit = ReplyHitTest(pt);
+        if (hit != g_replyHot) {
+            g_replyHot = hit;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        if (!g_replyTrack) {
+            TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
+            g_replyTrack = TrackMouseEvent(&tme) != FALSE;
+        }
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        g_replyTrack = false;
+        if (g_replyHot != -1) { g_replyHot = -1; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT) {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+            SetCursor(LoadCursorW(nullptr, ReplyHitTest(pt) >= 0 ? IDC_HAND : IDC_ARROW));
+            return TRUE;
+        }
+        break;
+
+    case WM_LBUTTONUP: {
+        POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        const int hit = ReplyHitTest(pt);
+        if (hit >= 0 && hit < static_cast<int>(g_replyItems.size())) {
+            PasteJob* job = new PasteJob();
+            job->text    = g_replyItems[static_cast<size_t>(hit)];
+            job->target  = g_replyTarget;
+            job->restore = g_cfg.restoreClipboard;
+            DestroyWindow(hwnd);        // erst weg, dann tippen - sonst klebt es im Bild
+            if (HANDLE th = CreateThread(nullptr, 0, PasteProc, job, 0, nullptr)) CloseHandle(th);
+            else delete job;
+        }
+        return 0;
+    }
+
+    case WM_RBUTTONUP:
+        DestroyWindow(hwnd);
+        return 0;
+
+    case WM_TIMER:
+        if (wp == 3) {
+            // ESC bricht ab. Das Popup hat wegen WS_EX_NOACTIVATE keinen
+            // Tastaturfokus und bekommt deshalb kein WM_KEYDOWN - die Taste wird
+            // hier abgefragt statt ueber einen globalen Hotkey oder einen
+            // Tastatur-Hook. Beides waere schwerer: ein RegisterHotKey(VK_ESCAPE)
+            // wuerde ESC systemweit wegfangen, solange das Popup offen ist, und
+            // damit auch im Chatfenster dahinter. So sieht das Zielprogramm sein
+            // ESC weiterhin.
+            //
+            // Das niederwertige Bit meldet "seit dem letzten Aufruf gedrueckt" und
+            // faengt damit auch ein kurzes Antippen zwischen zwei Ticks ab.
+            if (GetAsyncKeyState(VK_ESCAPE) & 0x8001) { DestroyWindow(hwnd); return 0; }
+            // Der Nutzer ist woanders hin - dann hat sich der Vorschlag erledigt.
+            if (GetForegroundWindow() != g_replyTarget) DestroyWindow(hwnd);
+        }
+        if (wp == 4) DestroyWindow(hwnd);
+        return 0;
+
+    case WM_DESTROY:
+        KillTimer(hwnd, 3);
+        KillTimer(hwnd, 4);
+        if (g_replyFont) { DeleteObject(g_replyFont); g_replyFont = nullptr; }
+        if (g_replyHead) { DeleteObject(g_replyHead); g_replyHead = nullptr; }
+        g_reply      = nullptr;
+        g_replyHot   = -1;
+        g_replyTrack = false;
+        g_replyRects.clear();
+        g_replyItems.clear();
+        return 0;
+
+    default: break;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static void ShowReplyPopup(const ReplyResult& res, HWND target) {
+    CloseReplyPopup();
+    if (res.items.empty()) return;
+
+    g_replyItems  = res.items;
+    g_replyTitle  = res.title;
+    g_replyTarget = target;
+    g_replyHot    = -1;
+    g_replyRects.clear();
+
+    const UINT dpi = DpiFor(target ? target : g_hwnd);
+    auto S = [dpi](int dip) { return MulDiv(dip, static_cast<int>(dpi), 96); };
+
+    g_replyFont = CreateFontW(-MulDiv(10, static_cast<int>(dpi), 72), 0, 0, 0, FW_NORMAL,
+                              FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                              CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    g_replyHead = CreateFontW(-MulDiv(8, static_cast<int>(dpi), 72), 0, 0, 0, FW_NORMAL,
+                              FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                              CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+
+    const int PAD = S(10), BPAD = S(9), GAP = S(6);
+    const int W     = S(430);
+    const int textW = W - 2 * PAD - 2 * BPAD;
+
+    // Hoehe jeder Blase aus dem umbrochenen Text berechnen
+    HDC     dc  = GetDC(nullptr);
+    HGDIOBJ old = SelectObject(dc, g_replyFont);
+
+    int y = PAD + S(16) + S(6);
+    for (const std::wstring& s : g_replyItems) {
+        RECT rc = { 0, 0, textW, 0 };
+        DrawTextW(dc, s.c_str(), -1, &rc, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+        const int h = rc.bottom + 2 * BPAD;
+        RECT b = { PAD, y, W - PAD, y + h };
+        g_replyRects.push_back(b);
+        y += h + GAP;
+    }
+    const int H = y - GAP + PAD;
+
+    SelectObject(dc, old);
+    ReleaseDC(nullptr, dc);
+
+    // Platzierung: bevorzugt ueber dem Textcursor. Chromium-Anwendungen melden
+    // aber oft gar keinen Win32-Caret - dann wird das Popup ueber dem unteren
+    // Rand des Chatfensters gezeigt, wo bei Teams wie Discord das Eingabefeld
+    // sitzt.
+    POINT anchor    = { 0, 0 };
+    bool  haveCaret = false;
+
+    GUITHREADINFO gti = {};
+    gti.cbSize = sizeof(gti);
+    if (target && GetGUIThreadInfo(GetWindowThreadProcessId(target, nullptr), &gti) &&
+        gti.hwndCaret) {
+        POINT p = { gti.rcCaret.left, gti.rcCaret.top };
+        if (ClientToScreen(gti.hwndCaret, &p)) { anchor = p; haveCaret = true; }
+    }
+    if (!haveCaret) {
+        RECT tr = {};
+        if (target) GetWindowRect(target, &tr);
+        anchor.x = (tr.left + tr.right) / 2;
+        anchor.y = tr.bottom - S(110);
+    }
+
+    int px = haveCaret ? anchor.x : anchor.x - W / 2;
+    int py = anchor.y - H - S(8);
+
+    MONITORINFO mi = {};
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW(MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST), &mi)) {
+        if (px + W > mi.rcWork.right) px = mi.rcWork.right - W;
+        if (px < mi.rcWork.left)      px = mi.rcWork.left;
+        if (py < mi.rcWork.top)       py = anchor.y + S(24);   // oben kein Platz -> darunter
+        if (py + H > mi.rcWork.bottom) py = mi.rcWork.bottom - H;
+    }
+
+    g_reply = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+                              kReplyClass, L"", WS_POPUP,
+                              px, py, W, H, nullptr, nullptr, g_inst, nullptr);
+    if (!g_reply) return;
+
+    ShowWindow(g_reply, SW_SHOWNOACTIVATE);
+
+    // Ein noch anliegendes ESC aus der Zeit vor dem Popup abholen, sonst schliesst
+    // sich das Fenster beim ersten Timer-Tick sofort wieder.
+    GetAsyncKeyState(VK_ESCAPE);
+
+    SetTimer(g_reply, 3,   120, nullptr);    // Wachhund: ESC? Fenster gewechselt?
+    SetTimer(g_reply, 4, 45000, nullptr);    // spaetestens dann von selbst zu
+}
+
+// Chat lesen und das Modell nach Vorschlaegen fragen (eigener Thread).
+static DWORD WINAPI ReplyWorker(LPVOID param) {
+    cfg::Config* c   = static_cast<cfg::Config*>(param);
+    ReplyResult* out = new ReplyResult();
+
+    chat::Conversation conv = chat::ReadForeground(static_cast<size_t>(c->replyContext));
+
+    if (conv.status == chat::ST_NO_TREE) {
+        // Der einzige Fall, der erklaert werden muss: die Anwendung stimmt, gibt
+        // ihren Inhalt aber nicht heraus. Ohne Hinweis sucht der Nutzer den
+        // Fehler bei sich.
+        out->error = (conv.app == chat::APP_DISCORD)
+            ? L"Discord gibt seinen Inhalt nicht heraus. Discord einmal mit dem Schalter "
+              L"--force-renderer-accessibility starten (siehe README)."
+            : L"Dieses Fenster stellt keinen Accessibility-Baum bereit.";
+    } else if (conv.status == chat::ST_OK) {
+        net::Result res = net::Chat(c->ollamaUrl, c->apiKey, c->model, c->replyPrompt,
+                                    chat::ToTranscript(conv), c->temperature, c->timeoutMs);
+        if (!res.ok) {
+            out->error = res.error;
+        } else {
+            out->items = net::ExtractReplies(res.body, 3);
+            out->title = conv.title;
+            if (out->items.empty()) out->error = L"Das Modell hat keinen Vorschlag geliefert.";
+        }
+    }
+    // ST_NO_APP (kein Chatprogramm) und ST_NO_CHAT (keine Unterhaltung offen)
+    // bleiben bewusst stumm - der Hotkey soll dort einfach nichts tun.
+
+    delete c;
+    InterlockedExchange(&g_replyBusy, 0);
+    if (!PostMessageW(g_hwnd, WM_APP_REPLIES, 0, reinterpret_cast<LPARAM>(out)))
+        delete out;
+    return 0;
+}
+
+static void StartReply() {
+    if (!g_cfg.replyEnabled) return;
+    if (g_cfg.ollamaUrl.empty() || g_cfg.model.empty()) return;
+    if (InterlockedCompareExchange(&g_replyBusy, 1, 0) != 0) return;
+
+    CloseReplyPopup();
+    g_replyTarget = GetForegroundWindow();
+
+    TraySetState(STATE_BUSY, std::wstring(kAppName) + L"  -  Antwortvorschlaege ...");
+
+    cfg::Config* snapshot = new cfg::Config(g_cfg);
+    if (HANDLE th = CreateThread(nullptr, 0, ReplyWorker, snapshot, 0, nullptr)) {
+        CloseHandle(th);
+    } else {
+        delete snapshot;
+        InterlockedExchange(&g_replyBusy, 0);
+        TraySetState(STATE_IDLE, IdleTip());
+    }
+}
+
+// =====================================================================================
+//  Einstellungsfenster (dynamisch erzeugt, ohne Ressourcendatei)
+// =====================================================================================
+// Ein Bedienelement anlegen und der Registerkarte zuordnen. page < 0 = immer
+// sichtbar (Tab-Control und die Schaltflaechen darunter).
+static HWND AddCtrl(int page, HWND parent, const wchar_t* cls, const wchar_t* text,
+                    DWORD style, DWORD exStyle, int x, int y, int w, int h, int id,
+                    unsigned flags = 0) {
+    HWND c = CreateWindowExW(exStyle, cls, text, WS_CHILD | style, x, y, w, h, parent,
+                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                             g_inst, nullptr);
+    if (c) {
+        const Slot s = { c, x, y, w, h, flags };
+        g_slots[(page < 0) ? PAGE_COUNT : page].push_back(s);
+    }
+    return c;
+}
+
+static void ShowPage(int page) {
+    for (int p = 0; p < PAGE_COUNT; ++p) {
+        const int cmd = (p == page) ? SW_SHOW : SW_HIDE;
+        for (const Slot& s : g_slots[p]) ShowWindow(s.hwnd, cmd);
+    }
+}
+
+// Alle Elemente auf die aktuelle Fenstergroesse umrechnen.
+//
+// Der zusaetzliche Platz geht in die Breite an fast alles und in die Hoehe
+// ausschliesslich an das jeweilige Prompt-Feld - genau dafuer zieht man das
+// Fenster auf. Was unter einem gewachsenen Feld sitzt, rutscht um denselben
+// Betrag nach unten (LF_Y).
+static void LayoutSettings(HWND hwnd) {
+    if (!g_baseCX || !g_baseCY) return;
+
+    RECT cr;
+    GetClientRect(hwnd, &cr);
+    const int dW = cr.right  - g_baseCX;
+    const int dH = cr.bottom - g_baseCY;
+
+    for (int p = 0; p <= PAGE_COUNT; ++p) {
+        for (const Slot& s : g_slots[p]) {
+            int x = s.x, y = s.y, w = s.w, h = s.h;
+            if (s.flags & LF_W) w += dW;
+            if (s.flags & LF_X) x += dW;
+            if (s.flags & LF_H) h += dH;
+            if (s.flags & LF_Y) y += dH;
+            SetWindowPos(s.hwnd, nullptr, x, y, w, h,
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
+        }
+    }
+}
+
+// Fuer Meldungen aus der Pruefung: erst die Registerkarte nach vorn holen, dann
+// den Fokus setzen. Ohne das landete der Cursor in einem unsichtbaren Feld, und
+// der Dialog saehe aus, als habe die Meldung gar nichts bewirkt.
+static void FocusOnPage(HWND hwnd, int page, int ctrlId) {
+    if (HWND tab = GetDlgItem(hwnd, IDC_TAB))
+        SendMessageW(tab, TCM_SETCURSEL, static_cast<WPARAM>(page), 0);
+    ShowPage(page);
+    SetFocus(GetDlgItem(hwnd, ctrlId));
+}
+
 static void BuildSettingsControls(HWND hwnd) {
     const UINT dpi = DpiFor(hwnd);
     auto S = [dpi](int dip) { return MulDiv(dip, static_cast<int>(dpi), 96); };
+
+    for (int p = 0; p <= PAGE_COUNT; ++p) g_slots[p].clear();
 
     g_font = CreateFontW(-MulDiv(9, static_cast<int>(dpi), 72), 0, 0, 0, FW_NORMAL,
                          FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
 
-    struct Row { const wchar_t* label; int id; int top; int height; DWORD extra; bool combo; };
-    const int W = 520;                       // Client-Breite in DIPs
-    const int LX = 14, EW = W - 28;
+    // Layout in DIPs. TH ist an der hoechsten Seite bemessen (Antwortvorschlaege).
+    const int W  = 520;
+    const int TX = 12, TY = 10, TW = W - 24, TH = 344;
+    const int PX = TX + 12, CW = TW - 24;      // Innenrand der Registerkarte
+    const int HALF = (CW - 16) / 2;
 
-    const Row rows[] = {
-        { L"Ollama-URL:",                                      IDC_URL,     30,  24, 0, false },
-        { L"Modell (Schreibweise wie in Ollama):",             IDC_MODEL,   84,  24, 0, true  },
-        { L"System-Prompt:",                                   IDC_PROMPT, 138, 120,
-          ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL, false },
-        { L"API-Key / Bearer-Token (bei lokalem Ollama leer):", IDC_KEY,    288,  24, 0, false },
-        { L"Hotkey (z. B. CTRL+SHIFT+SPACE):",                 IDC_HOTKEY, 342,  24, 0, false },
-    };
-
-    for (const Row& r : rows) {
-        CreateWindowExW(0, L"STATIC", r.label, WS_CHILD | WS_VISIBLE | SS_LEFT,
-                        S(LX), S(r.top - 18), S(EW), S(16), hwnd, nullptr, g_inst, nullptr);
-        if (r.combo) {
-            // Editierbare Combobox: freie Eingabe bleibt moeglich, die installierten
-            // Modelle erscheinen als Vorschlagsliste. Die Hoehe legt hier die
-            // aufgeklappte Liste fest, nicht das sichtbare Feld.
-            CreateWindowExW(0, L"COMBOBOX", L"",
-                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
-                            CBS_DROPDOWN | CBS_AUTOHSCROLL,
-                            S(LX), S(r.top), S(EW), S(220), hwnd,
-                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(r.id)), g_inst, nullptr);
-        } else {
-            CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL | r.extra,
-                            S(LX), S(r.top), S(EW), S(r.height), hwnd,
-                            reinterpret_cast<HMENU>(static_cast<INT_PTR>(r.id)), g_inst, nullptr);
+    HWND tab = AddCtrl(-1, hwnd, WC_TABCONTROLW, L"",
+                       WS_VISIBLE | WS_CLIPSIBLINGS | WS_TABSTOP, 0,
+                       S(TX), S(TY), S(TW), S(TH), IDC_TAB, LF_W | LF_H);
+    if (tab) {
+        TCITEMW ti = {};
+        ti.mask = TCIF_TEXT;
+        const wchar_t* names[PAGE_COUNT] = { L"Verbindung", L"Umformulieren",
+                                             L"Antwortvorschläge" };
+        for (int i = 0; i < PAGE_COUNT; ++i) {
+            ti.pszText = const_cast<LPWSTR>(names[i]);
+            SendMessageW(tab, TCM_INSERTITEMW, static_cast<WPARAM>(i),
+                         reinterpret_cast<LPARAM>(&ti));
         }
     }
 
-    CreateWindowExW(0, L"BUTTON", L"Antwort live tippen statt einfuegen (Streaming)",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                    S(LX), S(376), S(EW), S(20), hwnd,
-                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_TYPING)), g_inst, nullptr);
-    CreateWindowExW(0, L"STATIC",
-                    L"Antwort erscheint Token fuer Token. Zeilenumbrueche als ENTER.",
-                    WS_CHILD | WS_VISIBLE | SS_LEFT,
-                    S(LX + 18), S(396), S(EW - 18), S(16), hwnd, nullptr, g_inst, nullptr);
+    auto label = [&](int page, const wchar_t* t, int y, unsigned f = LF_W) {
+        AddCtrl(page, hwnd, L"STATIC", t, SS_LEFT, 0, S(PX), S(y), S(CW), S(16), 0, f);
+    };
+    auto edit = [&](int page, int id, int y, int h, DWORD extra, unsigned f = LF_W) {
+        AddCtrl(page, hwnd, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL | extra,
+                WS_EX_CLIENTEDGE, S(PX), S(y), S(CW), S(h), id, f);
+    };
+    auto check = [&](int page, int id, const wchar_t* t, int y, unsigned f = LF_W) {
+        AddCtrl(page, hwnd, L"BUTTON", t, WS_TABSTOP | BS_AUTOCHECKBOX, 0,
+                S(PX), S(y), S(CW), S(20), id, f);
+    };
+    auto hint = [&](int page, const wchar_t* t, int y, unsigned f = LF_W) {
+        AddCtrl(page, hwnd, L"STATIC", t, SS_LEFT, 0,
+                S(PX + 18), S(y), S(CW - 18), S(16), 0, f);
+    };
+    const DWORD kMulti = ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL;
 
-    CreateWindowExW(0, L"BUTTON", L"Zwischenablage nach dem Einfuegen wiederherstellen",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                    S(LX), S(418), S(EW), S(20), hwnd,
-                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RESTORE)), g_inst, nullptr);
+    // --- Registerkarte "Verbindung" ---------------------------------------------
+    label(PAGE_CONNECT, L"Ollama-URL:", 46);
+    edit (PAGE_CONNECT, IDC_URL, 64, 24, 0);
 
-    CreateWindowExW(0, L"BUTTON", L"Benachrichtigen, wenn das Modell beim Start geladen ist",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                    S(LX), S(442), S(EW), S(20), hwnd,
-                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_WARMMSG)), g_inst, nullptr);
+    label(PAGE_CONNECT, L"Modell (Schreibweise wie in Ollama):", 100);
+    // Editierbare Combobox: freie Eingabe bleibt moeglich, die installierten
+    // Modelle erscheinen als Vorschlagsliste. Die Hoehe legt hier die
+    // aufgeklappte Liste fest, nicht das sichtbare Feld.
+    AddCtrl(PAGE_CONNECT, hwnd, L"COMBOBOX", L"",
+            WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL, 0,
+            S(PX), S(118), S(CW), S(220), IDC_MODEL);
 
-    CreateWindowExW(0, L"BUTTON", L"Mit Windows automatisch starten",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                    S(LX), S(466), S(EW), S(20), hwnd,
-                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_AUTOSTART)), g_inst, nullptr);
+    label(PAGE_CONNECT, L"API-Key / Bearer-Token (bei lokalem Ollama leer):", 154);
+    edit (PAGE_CONNECT, IDC_KEY, 172, 24, 0);
 
-    const int BY = 502, BW = 110, BH = 28;
-    CreateWindowExW(0, L"BUTTON", L"Verbindung testen",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                    S(LX), S(BY), S(130), S(BH), hwnd,
-                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_TEST)), g_inst, nullptr);
-    CreateWindowExW(0, L"BUTTON", L"Speichern",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                    S(W - 14 - 2 * BW - 8), S(BY), S(BW), S(BH), hwnd,
-                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SAVE)), g_inst, nullptr);
-    CreateWindowExW(0, L"BUTTON", L"Abbrechen",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                    S(W - 14 - BW), S(BY), S(BW), S(BH), hwnd,
-                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CANCEL)), g_inst, nullptr);
+    AddCtrl(PAGE_CONNECT, hwnd, L"BUTTON", L"Verbindung testen",
+            WS_TABSTOP | BS_PUSHBUTTON, 0, S(PX), S(212), S(140), S(28), IDC_TEST);
+
+    check(PAGE_CONNECT, IDC_WARMMSG,
+          L"Benachrichtigen, wenn das Modell beim Start geladen ist", 260);
+    check(PAGE_CONNECT, IDC_AUTOSTART, L"Mit Windows automatisch starten", 284);
+
+    // --- Registerkarte "Umformulieren" ------------------------------------------
+    label(PAGE_REWRITE, L"Hotkey (z. B. CTRL+SHIFT+SPACE):", 46);
+    edit (PAGE_REWRITE, IDC_HOTKEY, 64, 24, 0);
+
+    label(PAGE_REWRITE, L"System-Prompt:", 100);
+    edit (PAGE_REWRITE, IDC_PROMPT, 118, 140, kMulti, LF_W | LF_H);
+
+    check(PAGE_REWRITE, IDC_TYPING, L"Antwort live tippen statt einfügen (Streaming)",
+          268, LF_W | LF_Y);
+    hint (PAGE_REWRITE, L"Antwort erscheint Token für Token. Zeilenumbrüche als ENTER.",
+          288, LF_W | LF_Y);
+    check(PAGE_REWRITE, IDC_RESTORE,
+          L"Zwischenablage nach dem Einfügen wiederherstellen", 310, LF_W | LF_Y);
+
+    // --- Registerkarte "Antwortvorschläge" ---------------------------------------
+    check(PAGE_REPLY, IDC_REPLYON,
+          L"Antwortvorschläge in Teams und Discord anbieten", 46);
+    hint (PAGE_REPLY, L"Liest den offenen Chat des Vordergrundfensters. "
+                      L"ESC schließt die Vorschläge.", 66);
+
+    // Hotkey und Kontexttiefe teilen sich eine Zeile und behalten ihre Breite,
+    // wenn das Fenster waechst - zwei kurze Eingaben muessen nicht mitwachsen.
+    AddCtrl(PAGE_REPLY, hwnd, L"STATIC", L"Hotkey:", SS_LEFT, 0,
+            S(PX), S(96), S(HALF), S(16), 0);
+    AddCtrl(PAGE_REPLY, hwnd, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE,
+            S(PX), S(114), S(HALF), S(24), IDC_REPLYKEY);
+
+    AddCtrl(PAGE_REPLY, hwnd, L"STATIC", L"Gelesene Nachrichten (2-40):", SS_LEFT, 0,
+            S(PX + HALF + 16), S(96), S(HALF), S(16), 0);
+    AddCtrl(PAGE_REPLY, hwnd, L"EDIT", L"", WS_TABSTOP | ES_NUMBER, WS_EX_CLIENTEDGE,
+            S(PX + HALF + 16), S(114), S(60), S(24), IDC_REPLYCTX);
+
+    label(PAGE_REPLY, L"System-Prompt für die Vorschläge:", 150);
+    edit (PAGE_REPLY, IDC_REPLYPROMPT, 168, 140, kMulti, LF_W | LF_H);
+
+    // Einzeilig halten: das STATIC bricht sonst um und wird unten abgeschnitten.
+    AddCtrl(PAGE_REPLY, hwnd, L"STATIC",
+            L"Jeder Vorschlag muss in <reply>-Tags stehen - daraus liest ChatNicer sie.",
+            SS_LEFT, 0, S(PX), S(316), S(CW), S(16), 0, LF_W | LF_Y);
+
+    // --- Schaltflaechen (immer sichtbar) -----------------------------------------
+    const int BY = TY + TH + 12, BW = 110, BH = 28;
+    AddCtrl(-1, hwnd, L"BUTTON", L"Speichern", WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, 0,
+            S(W - 12 - 2 * BW - 8), S(BY), S(BW), S(BH), IDC_SAVE, LF_X | LF_Y);
+    AddCtrl(-1, hwnd, L"BUTTON", L"Abbrechen", WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 0,
+            S(W - 12 - BW), S(BY), S(BW), S(BH), IDC_CANCEL, LF_X | LF_Y);
 
     EnumChildWindows(hwnd, [](HWND child, LPARAM) -> BOOL {
         SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
@@ -753,20 +1278,37 @@ static void BuildSettingsControls(HWND hwnd) {
     SetWindowTextW(GetDlgItem(hwnd, IDC_PROMPT), ToCrLf(g_cfg.systemPrompt).c_str());
     SetWindowTextW(GetDlgItem(hwnd, IDC_HOTKEY),
                    cfg::HotkeyToString(g_cfg.hotkeyMods, g_cfg.hotkeyVk).c_str());
+    SetWindowTextW(GetDlgItem(hwnd, IDC_REPLYKEY),
+                   cfg::HotkeyToString(g_cfg.replyMods, g_cfg.replyVk).c_str());
+    SetWindowTextW(GetDlgItem(hwnd, IDC_REPLYPROMPT), ToCrLf(g_cfg.replyPrompt).c_str());
+
+    wchar_t ctxText[16];
+    wsprintfW(ctxText, L"%d", g_cfg.replyContext);
+    SetWindowTextW(GetDlgItem(hwnd, IDC_REPLYCTX), ctxText);
+
+    CheckDlgButton(hwnd, IDC_REPLYON, g_cfg.replyEnabled ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwnd, IDC_RESTORE, g_cfg.restoreClipboard ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwnd, IDC_TYPING,  g_cfg.typingInput      ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwnd, IDC_WARMMSG, g_cfg.warmupNotify     ? BST_CHECKED : BST_UNCHECKED);
     // Autostart steht in der Registry, nicht in g_cfg - immer den echten Zustand zeigen.
     CheckDlgButton(hwnd, IDC_AUTOSTART, cfg::AutostartEnabled() ? BST_CHECKED : BST_UNCHECKED);
 
+    ShowPage(PAGE_CONNECT);
+
     // installierte Modelle nebenher holen - blockiert den Dialog nicht
     RequestModelList(g_cfg.ollamaUrl, g_cfg.apiKey);
 
+    // Ausgangsgroesse merken: LayoutSettings() rechnet alle Abweichungen davon.
+    g_baseCX = S(W);
+    g_baseCY = S(BY + BH + 12);
+
     // Fenster auf den Inhalt anpassen und zentrieren
-    RECT want = { 0, 0, S(W), S(BY + BH + 14) };
+    RECT want = { 0, 0, g_baseCX, g_baseCY };
     AdjustWindowRectEx(&want, static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE)), FALSE,
                        static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE)));
     const int ww = want.right - want.left, wh = want.bottom - want.top;
+    g_minCX = ww;                       // kleiner darf es nicht werden
+    g_minCY = wh;
     const int sx = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2;
     const int sy = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
     SetWindowPos(hwnd, nullptr, sx, sy, ww, wh, SWP_NOZORDER);
@@ -792,7 +1334,7 @@ static bool ApplySettings(HWND hwnd) {
         MessageBoxW(hwnd, L"Die Ollama-URL muss mit http:// oder https:// beginnen.\n\n"
                           L"Standard einer lokalen Installation:\nhttp://localhost:11434",
                     kAppName, MB_ICONWARNING | MB_OK);
-        SetFocus(GetDlgItem(hwnd, IDC_URL));
+        FocusOnPage(hwnd, PAGE_CONNECT, IDC_URL);
         return false;
     }
 
@@ -800,7 +1342,7 @@ static bool ApplySettings(HWND hwnd) {
         MessageBoxW(hwnd, L"Bitte ein Modell angeben, z. B. qwen3:4b.\n\n"
                           L"Die installierten Modelle zeigt \"ollama list\".",
                     kAppName, MB_ICONWARNING | MB_OK);
-        SetFocus(GetDlgItem(hwnd, IDC_MODEL));
+        FocusOnPage(hwnd, PAGE_CONNECT, IDC_MODEL);
         return false;
     }
 
@@ -810,7 +1352,7 @@ static bool ApplySettings(HWND hwnd) {
         MessageBoxW(hwnd, L"Hotkey nicht verstanden.\n\nBeispiele:\n"
                           L"CTRL+SHIFT+SPACE\nCTRL+ALT+Q\nWIN+F9",
                     kAppName, MB_ICONWARNING | MB_OK);
-        SetFocus(GetDlgItem(hwnd, IDC_HOTKEY));
+        FocusOnPage(hwnd, PAGE_REWRITE, IDC_HOTKEY);
         return false;
     }
 
@@ -823,13 +1365,60 @@ static bool ApplySettings(HWND hwnd) {
                         kAppName, MB_ICONWARNING | MB_OK);
             g_hotkeyOk = RegisterHotKey(g_hwnd, HOTKEY_ID, g_cfg.hotkeyMods | MOD_NOREPEAT,
                                         g_cfg.hotkeyVk) != FALSE;
-            SetFocus(GetDlgItem(hwnd, IDC_HOTKEY));
+            FocusOnPage(hwnd, PAGE_REWRITE, IDC_HOTKEY);
             return false;
         }
         g_hotkeyOk = true;
     }
     next.hotkeyMods = mods;
     next.hotkeyVk   = vk;
+
+    // Zweiter Hotkey (Antwortvorschlaege). Er wird auch dann registriert, wenn
+    // die Funktion abgeschaltet ist - so bleibt die Kombination reserviert und
+    // ein spaeteres Einschalten braucht keinen Neustart. StartReply() prueft
+    // replyEnabled selbst.
+    UINT rmods = 0, rvk = 0;
+    const std::wstring rkText = net::Trim(GetText(GetDlgItem(hwnd, IDC_REPLYKEY)));
+    if (!cfg::ParseHotkey(rkText, rmods, rvk)) {
+        MessageBoxW(hwnd, L"Hotkey fuer Antwortvorschlaege nicht verstanden.\n\nBeispiele:\n"
+                          L"CTRL+ALT+SPACE\nCTRL+ALT+A\nWIN+F10",
+                    kAppName, MB_ICONWARNING | MB_OK);
+        FocusOnPage(hwnd, PAGE_REPLY, IDC_REPLYKEY);
+        return false;
+    }
+    if (rmods == mods && rvk == vk) {
+        MessageBoxW(hwnd, L"Beide Hotkeys sind gleich belegt.\n\n"
+                          L"Bitte fuer die Antwortvorschlaege eine andere Kombination waehlen.",
+                    kAppName, MB_ICONWARNING | MB_OK);
+        FocusOnPage(hwnd, PAGE_REPLY, IDC_REPLYKEY);
+        return false;
+    }
+    if (rmods != g_cfg.replyMods || rvk != g_cfg.replyVk || !g_replyKeyOk) {
+        UnregisterHotKey(g_hwnd, HOTKEY_REPLY);
+        if (!RegisterHotKey(g_hwnd, HOTKEY_REPLY, rmods | MOD_NOREPEAT, rvk)) {
+            MessageBoxW(hwnd, L"Der Hotkey fuer die Antwortvorschlaege ist bereits von einem "
+                              L"anderen Programm belegt.\nBitte eine andere Kombination waehlen.",
+                        kAppName, MB_ICONWARNING | MB_OK);
+            g_replyKeyOk = RegisterHotKey(g_hwnd, HOTKEY_REPLY, g_cfg.replyMods | MOD_NOREPEAT,
+                                          g_cfg.replyVk) != FALSE;
+            FocusOnPage(hwnd, PAGE_REPLY, IDC_REPLYKEY);
+            return false;
+        }
+        g_replyKeyOk = true;
+    }
+    next.replyMods    = rmods;
+    next.replyVk      = rvk;
+    next.replyEnabled = IsDlgButtonChecked(hwnd, IDC_REPLYON) == BST_CHECKED;
+    next.replyPrompt  = ToLf(GetText(GetDlgItem(hwnd, IDC_REPLYPROMPT)));
+
+    // Kontexttiefe auf den erlaubten Bereich klemmen statt den Nutzer mit einer
+    // Meldung aufzuhalten - ein leeres Feld heisst schlicht "Standard".
+    const std::wstring ctxText = net::Trim(GetText(GetDlgItem(hwnd, IDC_REPLYCTX)));
+    int ctx = 0;
+    for (wchar_t ch : ctxText)
+        if (ch >= L'0' && ch <= L'9') ctx = ctx * 10 + (ch - L'0');
+    if (ctx <= 0) ctx = 8;
+    next.replyContext = (ctx < 2) ? 2 : (ctx > 40 ? 40 : ctx);
 
     // Autostart landet in der Registry, nicht in der config.ini. Nur anfassen, wenn
     // die Checkbox vom Ist-Zustand abweicht - sonst wuerde jedes Speichern den
@@ -871,6 +1460,30 @@ static LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
         SetBkMode(reinterpret_cast<HDC>(wp), TRANSPARENT);
         return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
 
+    case WM_SIZE:
+        LayoutSettings(hwnd);
+        // Das Tab-Control zeichnet seinen Rahmen nicht von selbst nach, wenn es
+        // waechst - ohne das bleiben beim Aufziehen Reste des alten Rands stehen.
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
+
+    case WM_GETMINMAXINFO:
+        if (g_minCX && g_minCY) {
+            MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+            mmi->ptMinTrackSize.x = g_minCX;
+            mmi->ptMinTrackSize.y = g_minCY;
+        }
+        return 0;
+
+    case WM_NOTIFY: {
+        const NMHDR* nm = reinterpret_cast<const NMHDR*>(lp);
+        if (nm && nm->idFrom == IDC_TAB && nm->code == TCN_SELCHANGE) {
+            ShowPage(static_cast<int>(SendMessageW(nm->hwndFrom, TCM_GETCURSEL, 0, 0)));
+            return 0;
+        }
+        break;
+    }
+
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_SAVE:
@@ -893,7 +1506,7 @@ static LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
                 delete t;
                 MessageBoxW(hwnd, L"Bitte zuerst ein Modell angeben, z. B. qwen3:4b.",
                             kAppName, MB_ICONINFORMATION | MB_OK);
-                SetFocus(GetDlgItem(hwnd, IDC_MODEL));
+                FocusOnPage(hwnd, PAGE_CONNECT, IDC_MODEL);
                 return 0;
             }
             // Der Test kann je nach Modell einige Sekunden dauern.
@@ -925,6 +1538,7 @@ static LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
 
     case WM_DESTROY:
         if (g_font) { DeleteObject(g_font); g_font = nullptr; }
+        for (int p = 0; p <= PAGE_COUNT; ++p) g_slots[p].clear();
         g_settings = nullptr;
         return 0;
 
@@ -938,10 +1552,14 @@ static void OpenSettings() {
         SetForegroundWindow(g_settings);
         return;
     }
+    // Groessenveraenderlich (WS_THICKFRAME), damit sich die beiden Prompt-Felder
+    // aufziehen lassen - darin steht der laengste Text des ganzen Programms.
+    // WS_CLIPCHILDREN haelt das Flackern beim Ziehen in Grenzen.
     g_settings = CreateWindowExW(
         WS_EX_CONTROLPARENT | WS_EX_APPWINDOW, kCfgClass,
         L"ChatNicer - Einstellungen",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX |
+        WS_THICKFRAME | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 640, 520,
         nullptr, nullptr, g_inst, nullptr);
 
@@ -1012,7 +1630,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_HOTKEY:
-        if (wp == HOTKEY_ID) StartWork();
+        if      (wp == HOTKEY_ID)    StartWork();
+        else if (wp == HOTKEY_REPLY) StartReply();
         return 0;
 
     case WM_COMMAND:
@@ -1075,6 +1694,23 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
+    case WM_APP_REPLIES: {
+        ReplyResult* r = reinterpret_cast<ReplyResult*>(lp);
+        if (!g_busy) TraySetState(STATE_IDLE, IdleTip());
+        if (r) {
+            if (!r->items.empty()) {
+                ShowReplyPopup(*r, g_replyTarget);
+            } else if (!r->error.empty()) {
+                TraySetState(STATE_ERROR, std::wstring(kAppName) + L"  -  Fehler");
+                TrayBalloon(kAppName, r->error, true);
+                SetTimer(hwnd, 1, 4000, nullptr);
+            }
+            // Weder Vorschlag noch Fehler: kein Chat offen - dann bleibt es still.
+        }
+        delete r;
+        return 0;
+    }
+
     case WM_APP_MODELS: {
         std::vector<std::wstring>* list = reinterpret_cast<std::vector<std::wstring>*>(lp);
         if (list && g_settings) {
@@ -1099,6 +1735,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_DESTROY:
         UnregisterHotKey(hwnd, HOTKEY_ID);
+        UnregisterHotKey(hwnd, HOTKEY_REPLY);
+        CloseReplyPopup();
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
         PostQuitMessage(0);
         return 0;
@@ -1132,7 +1770,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
         SetProcessDPIAware();
     }
 
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES };
+    // ICC_TAB_CLASSES ist Pflicht, seit der Einstellungsdialog Registerkarten hat -
+    // ohne sie entsteht das Tab-Control schlicht nicht.
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES | ICC_TAB_CLASSES };
     InitCommonControlsEx(&icc);
 
     cfg::Load(g_cfg);
@@ -1159,6 +1799,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     wcCfg.hIcon         = g_icons[STATE_IDLE];
     RegisterClassExW(&wcCfg);
 
+    // Popup der Antwortvorschlaege. Kein Hintergrund-Brush: gezeichnet wird
+    // komplett in WM_PAINT (Doppelpuffer), sonst blitzt die Flaeche auf.
+    WNDCLASSEXW wcRep = {};
+    wcRep.cbSize        = sizeof(wcRep);
+    wcRep.lpfnWndProc   = ReplyProcWnd;
+    wcRep.hInstance     = inst;
+    wcRep.lpszClassName = kReplyClass;
+    wcRep.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
+    RegisterClassExW(&wcRep);
+
     // Bewusst KEIN HWND_MESSAGE-Fenster: message-only Windows empfangen keine
     // Broadcasts und wuerden die "TaskbarCreated"-Nachricht verpassen.
     // Stattdessen ein normales Fenster, das nie sichtbar gemacht wird.
@@ -1180,6 +1830,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
         TrayBalloon(kAppName,
                     L"Der Hotkey " + cfg::HotkeyToString(g_cfg.hotkeyMods, g_cfg.hotkeyVk) +
                     L" ist belegt. Bitte unter \"Einstellungen\" eine andere Kombination waehlen.",
+                    true);
+    }
+
+    g_replyKeyOk = RegisterHotKey(g_hwnd, HOTKEY_REPLY, g_cfg.replyMods | MOD_NOREPEAT,
+                                  g_cfg.replyVk) != FALSE;
+    if (!g_replyKeyOk && g_cfg.replyEnabled) {
+        TrayBalloon(kAppName,
+                    L"Der Hotkey " + cfg::HotkeyToString(g_cfg.replyMods, g_cfg.replyVk) +
+                    L" fuer Antwortvorschlaege ist belegt. Bitte unter \"Einstellungen\" "
+                    L"eine andere Kombination waehlen.",
                     true);
     }
     // Erststart (noch keine config.ini): direkt konfigurieren lassen. Die Standardwerte

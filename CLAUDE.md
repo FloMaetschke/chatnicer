@@ -13,8 +13,8 @@ stehen im [README.md](README.md).
 ## Build
 
 ```bat
-build.bat            :: Standard-Release -> build\ChatNicer.exe (118.272 B)
-build.bat compat     :: statische CRT inkl. Exceptions (215.552 B)
+build.bat            :: Standard-Release -> build\ChatNicer.exe (151.040 B)
+build.bat compat     :: statische CRT inkl. Exceptions (249.856 B)
 ```
 
 Alternativ MSBuild (liefert dieselbe EXE nach `build\Release\`):
@@ -147,8 +147,8 @@ neuen Bedienelemente fehlen. Wer unsicher ist, prüft, wem das Fenster gehört:
 
 ## Harte Randbedingungen
 
-**Größenbudget < 200 KB** (204.800 Bytes). Standard-Release aktuell 118.272 Bytes
-– rund 84 KB Reserve; die compat-Variante liegt derzeit darüber (siehe unten). Erreicht wird das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`
+**Größenbudget < 200 KB** (204.800 Bytes). Standard-Release aktuell 151.040 Bytes
+– rund 52 KB Reserve; die compat-Variante liegt derzeit darüber (siehe unten). Erreicht wird das über `/NODEFAULTLIB:libucrt.lib` + `ucrt.lib`
 (vcruntime statisch, UCRT dynamisch – `ucrtbase.dll` gehört ab Windows 10 zum
 System, deshalb kein VC++-Redist), dazu `/O1 /Os`, `/GL`+`/LTCG`, `/GR-`, `/GS-`,
 `/OPT:REF /OPT:ICF` und abgeschaltete Exceptions. Nach Änderungen die Größe
@@ -162,13 +162,20 @@ bleibt trotzdem das Ziel: eingebunden sind weiterhin nur `<string>` und
 jetzt zwar hinein, `<regex>` allein frisst aber einen Großteil des neuen
 Spielraums – im Zweifel von Hand parsen, so wie es `network.h` schon tut.
 
-**`build.bat compat` reißt das Budget derzeit: 215.552 B bei 204.800 B erlaubt –
-10.752 B zu viel.** Aufgelaufen ist das in vier Schritten: die Emoji-Regel im
+**`build.bat compat` reißt das Budget derzeit: 249.856 B bei 204.800 B erlaubt –
+45.056 B zu viel.** Aufgelaufen ist das in fünf Schritten: die Emoji-Regel im
 Standard-Prompt hat die Variante exakt auf die Grenze gesetzt, die tolerante
 Rahmen-Erkennung (`IsFrameTagName` & Co.) hat sie darüber geschoben, der
 Start-Warmup (`net::Warmup` + `WarmupProc`) noch einmal um 4.608 B, die beiden
-Schalter (Warmup-Meldung, Autostart) um weitere 3.072 B. Der Standard-Release ist
-davon unberührt (118.272 B, rund 84 KB Reserve).
+Schalter (Warmup-Meldung, Autostart) um weitere 3.072 B – und zuletzt die
+Antwortvorschläge samt umgebautem Dialog (`chatread.h`, Popup, `kReplyPrompt`,
+Registerkarten, Größenänderung) um 34.304 B. Der Standard-Release ist davon
+unberührt (151.040 B, rund 52 KB Reserve).
+
+Die Antwortvorschläge sind damit der mit Abstand größte Einzelposten. Wer sie
+zurückbauen will, findet den Hebel bei `kReplyPrompt` (rund 2 KB als
+`wchar_t`-Literal) und beim Popup-Zeichencode – die MSAA-Schicht selbst ist
+schlank, weil sie ohne UI Automation auskommt.
 
 Wer das zurückholen will, hat drei Hebel:
 
@@ -202,10 +209,11 @@ kein `throw`; STL-Allokationsfehler brechen hart ab.
 
 ## Architektur
 
-Eine Übersetzungseinheit: `main.cpp` bindet `config.h` und `network.h` ein, beide
-header-only (alles `inline`). Es gibt keine `.rc`-Datei – Tray-Icons werden in
-`MakeIcon()` per DIB-Section pixelweise gezeichnet, das Manifest für Visual Styles
-kommt über ein `#pragma comment(linker, "/manifestdependency:…")`.
+Eine Übersetzungseinheit: `main.cpp` bindet `config.h`, `network.h` und
+`chatread.h` ein, alle header-only (alles `inline`). Es gibt keine `.rc`-Datei –
+Tray-Icons werden in `MakeIcon()` per DIB-Section pixelweise gezeichnet, das
+Manifest für Visual Styles kommt über ein
+`#pragma comment(linker, "/manifestdependency:…")`.
 
 ### Threading
 
@@ -232,6 +240,38 @@ Explorer-Neustart dauerhaft weg.
 Das Einstellungsfenster wird zur Laufzeit aufgebaut (`BuildSettingsControls`),
 Layout in DIPs mit DPI-Skalierung. Tab/Enter/Esc funktionieren nur, weil die
 Message-Loop `IsDialogMessage(g_settings, …)` aufruft.
+
+### Registerkarten und Größenänderung
+
+Drei Karten (`PAGE_CONNECT`, `PAGE_REWRITE`, `PAGE_REPLY`). Die Bedienelemente
+sind **Kinder des Fensters, nicht des Tab-Controls** – ein Tab-Control kann keine
+haben. Umgeschaltet wird über Sichtbarkeit (`ShowPage`); unsichtbare Controls
+überspringt `IsDialogMessage` von selbst, damit stimmt die Tab-Reihenfolge ohne
+weiteres Zutun.
+
+`ICC_TAB_CLASSES` muss bei `InitCommonControlsEx` stehen, sonst entsteht das
+Tab-Control schlicht nicht.
+
+**Meldungen aus `ApplySettings()` gehen über `FocusOnPage()`**, nicht über
+`SetFocus`. Sonst landet der Cursor in einem unsichtbaren Feld, und der Dialog
+sieht aus, als habe die Fehlermeldung nichts bewirkt.
+
+Das Fenster ist **größenveränderlich** (`WS_THICKFRAME`), weil in den beiden
+Prompt-Feldern der längste Text des Programms steht. Jedes Element merkt sich in
+`g_slots` seine Ausgangsgeometrie plus Flags; `LayoutSettings()` rechnet daraus
+die neue Lage:
+
+| Flag | Wirkung |
+|---|---|
+| `LF_W` / `LF_H` | Breite bzw. Höhe wächst mit |
+| `LF_Y` | rutscht nach unten, wenn das Feld darüber gewachsen ist |
+| `LF_X` | bleibt am rechten Rand (die Schaltflächen) |
+
+Die Höhe bekommt **ausschließlich** das jeweilige Prompt-Feld – genau dafür zieht
+man das Fenster auf. `WM_GETMINMAXINFO` verhindert, dass es unter die
+Ausgangsgröße geht; ohne das überlappen sich die Elemente. Das `InvalidateRect`
+in `WM_SIZE` ist nötig, weil das Tab-Control seinen Rahmen beim Wachsen nicht
+selbst nachzeichnet.
 
 ### Ablauf in `WorkerProc` – die Reihenfolge ist heikel
 
@@ -403,6 +443,85 @@ gezielt ab `"message"`, damit ein vorangehendes `thinking`-Feld nicht stört.
 `Temperature` wird als String direkt ins JSON geschrieben und deshalb in
 `cfg::Load()` auf reine Dezimalzeichen geprüft – diese Prüfung nicht entfernen.
 
+## Antwortvorschläge (`chatread.h`, Popup in `main.cpp`)
+
+Zweiter Hotkey (Standard `STRG+ALT+SPACE`, `HOTKEY_REPLY`): den offenen Chat des
+Vordergrundfensters lesen, das Modell nach drei Antworten fragen, sie als
+Sprechblasen über dem Eingabefeld anbieten, per Klick einfügen.
+
+**Gelesen wird über MSAA, nicht über UI Automation.** Teams und Discord sind
+beide Chromium-Anwendungen und stellen ihren Renderer-Inhalt am Kindfenster
+`Chrome_RenderWidgetHostHWND` („Chrome Legacy Window") bereit. Damit reicht
+*eine* Codeschiene für beide; `uiautomationcore.dll` wird nicht gebraucht. Der
+Weg war nicht offensichtlich: Teams hat zusätzlich einen UIA-Provider, Discord
+antwortet auf `UiaRootObjectId` mit 0 und hat **nur** MSAA. Wer hier auf UIA
+umbaut, verliert Discord.
+
+**Der Anker entscheidet, welcher Chat gelesen wird** (`IsAnchorName`):
+
+| App | Anker | Rolle |
+|---|---|---|
+| Teams | `Nachrichtenliste` / `Message list` | `ROLE_SYSTEM_GROUPING` (20) |
+| Discord | `Nachrichten in <Chat>` / `Messages in …` | `ROLE_SYSTEM_LIST` (33) |
+
+Beide Namen kommen aus dem `aria-label` und sind **lokalisiert** – deshalb je
+zwei Schreibweisen. Discord führt den Chatnamen gleich mit, daher stammt dort der
+Titel aus dem Anker; bei Teams kommt er aus dem Fenstertitel, und zwar aus dem
+**zweiten** Segment (`Chat | <Partner> | <Organisation> | …`) – das erste ist nur
+der Bereichsname.
+
+Unter dem Anker sucht `FindMessageBox()` den Nachfahren mit den meisten
+texttragenden direkten Kindern. Bei Discord ist der Anker schon die Liste, bei
+Teams sitzt sie einige Ebenen tiefer.
+
+**Findet sich kein Anker, ist kein Chat offen – und dann passiert bewusst
+nichts.** Discord auf „Freunde" und Teams in der Chatübersicht sind damit
+automatisch abgedeckt, ohne Sonderfall im Code.
+
+**Der Unterschied zwischen „kein Chat" und „kein Baum" ist Bedienung, nicht
+Kosmetik** (`chat::Status`). `ST_NO_APP` und `ST_NO_CHAT` bleiben stumm.
+`ST_NO_TREE` dagegen meldet Klartext – sonst stünde der Nutzer vor einem Hotkey,
+der scheinbar grundlos nichts tut.
+
+**Discord gibt seinen Inhalt nur nach `--force-renderer-accessibility` preis.**
+Gemessen: weder `WM_GETOBJECT` (an `Chrome_WidgetWin_1` *und* am Legacy-Fenster)
+noch `SPI_SETSCREENREADER` aktivieren den Baum zur Laufzeit – 24 s lang keine
+Reaktion, das Legacy-Fenster entsteht gar nicht erst. Teams braucht nichts
+dergleichen; dort genügt das `WM_GETOBJECT` aus `FindLegacyWindow()`. Nicht
+erneut mit dem systemweiten Screenreader-Flag versuchen, das war ergebnislos.
+
+**Nur der sichtbare Ausschnitt wird gelesen**: nur das Vordergrundfenster, darin
+nur der eine offene Chat, davon nur die letzten `replyContext` Nachrichten
+(Standard 8, `FindAnchor` zusätzlich auf 6000 Elemente gedeckelt). Das ist keine
+Sparsamkeit um ihrer selbst willen – ein Werkzeug, das den kompletten Verlauf
+aller Unterhaltungen einsammelt, wäre ein Mitlesewerkzeug. Wer den Deckel
+anhebt, sollte das begründen können.
+
+**Das Popup trägt `WS_EX_NOACTIVATE`, und daran hängt der ganze Ablauf.** Würde
+es den Fokus nehmen, verlöre das Chat-Eingabefeld seinen Cursor und das
+anschließende STRG+V ginge ins Leere. Der Chat bleibt durchgehend aktives
+Fenster; das Popup schwebt nur darüber und fängt Mausklicks ab. Geschlossen wird
+per ESC, Rechtsklick, beim Wechsel des Vordergrundfensters (Timer 3, 120 ms) oder
+nach 45 s (Timer 4).
+
+**ESC wird gepollt, nicht empfangen.** Ein Fenster ohne Fokus bekommt kein
+`WM_KEYDOWN`, deshalb fragt Timer 3 `GetAsyncKeyState(VK_ESCAPE)` ab – inklusive
+niederwertigem Bit, damit auch ein kurzes Antippen zwischen zwei Ticks zählt.
+Die naheliegende Alternative `RegisterHotKey(VK_ESCAPE)` wäre schlechter: sie
+finge ESC systemweit weg, solange das Popup offen ist, und damit auch im
+Chatfenster dahinter. Beim Anzeigen wird `GetAsyncKeyState` einmal leer
+abgerufen, sonst schließt ein ESC von *vor* dem Hotkey das Popup sofort wieder.
+
+Platziert wird über dem Textcursor, falls `GetGUIThreadInfo` einen meldet –
+Chromium-Anwendungen tun das oft **nicht**, dann dient der untere Rand des
+Chatfensters als Anker, wo bei beiden Programmen das Eingabefeld sitzt.
+
+**Der Verlauf geht als `<text_to_process>` an das Modell** (`kReplyPrompt`). Das
+ist hier sicherheitsrelevant und nicht nur Formsache: Der Text stammt von einem
+fremden Gesprächspartner. Ohne die Klammer würde ein „ignoriere deine Anweisungen
+und …" im Chat als Anweisung an das Modell wirken. Wer `kReplyPrompt` ändert,
+behält diese Regel.
+
 ## config.ini (`config.h`)
 
 `WritePrivateProfileStringW` schreibt nur dann UTF-16, wenn die Datei bereits eine
@@ -463,11 +582,35 @@ leerem Titel und findet nichts. `[NullString]::Value` verwenden.
 Der **Einstellungsdialog lässt sich vollständig fernsteuern**, ohne Fokusprobleme:
 `PostMessage(g_hwnd, WM_COMMAND, 40001, 0)` öffnet ihn (`IDM_SETTINGS`), `BM_CLICK`
 (0x00F5) schaltet eine Checkbox, `BM_GETCHECK` (0x00F0) liest sie, und
-`SendMessage(dlg, WM_COMMAND, 1011, 0)` speichert (`IDC_SAVE`). So lassen sich
+`SendMessage(dlg, WM_COMMAND, IDC_SAVE, 0)` speichert. So lassen sich
 Checkbox-Zustände und ihre Wirkung auf `config.ini`/Registry prüfen. Die Control-IDs
 stehen im `IDC_*`-Enum in `main.cpp` – sie verschieben sich, sobald jemand einen
-Eintrag einfügt, also nicht hart merken. Ein Screenshot des Dialogs gelingt mit
+Eintrag einfügt, also nicht hart merken. `WM_SETTEXT`/`WM_GETTEXT` marshallt
+Windows über Prozessgrenzen, ein Prompt lässt sich also von außen setzen und
+danach in der `config.ini` gegenprüfen.
+
+**Die Registerkarte wechselt man per Tastatur, nicht per `TCM_SETCURSEL`.**
+Letzteres löst **kein** `TCN_SELCHANGE` aus – der Reiter springt um, die
+Bedienelemente bleiben aber die der alten Karte, und der Test fotografiert
+Unsinn. Stattdessen `WM_KEYDOWN`/`WM_KEYUP` mit `VK_RIGHT` an das Tab-Control
+schicken und mit `TCM_GETCURSEL` gegenprüfen (beides ohne Zeiger, also
+prozessübergreifend unbedenklich). Ein `WM_NOTIFY` von Hand zu senden scheitert:
+der `NMHDR`-Zeiger läge im falschen Adressraum. Ein Screenshot des Dialogs gelingt mit
 `PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)`.
+
+**Die Antwortvorschläge lassen sich fernsteuern**, anders als der Haupt-Hotkey:
+Das Zielfenster muss nur im **Vordergrund** sein (Eingabefokus braucht es zum
+Lesen nicht), dann genügt `PostMessage(g_hwnd, WM_HOTKEY, 2, 0)`. Für den
+Vordergrundwechsel scheitert `SetForegroundWindow` allein am Fokusschutz –
+zuverlässig wird es, wenn man vorher **ALT antippt** (`keybd_event(0x12, …)`),
+danach gilt der eigene Prozess als zuletzt eingabeberechtigt; `SwitchToThisWindow`
+ist der Fallback. Das Popup findet man über `FindWindowW("ChatNicerReplyWnd", …)`
+und fotografiert es mit `PrintWindow(…, PW_RENDERFULLCONTENT)`.
+
+**Das Einfügen per Klick nicht automatisiert testen.** Der Klick schreibt Text in
+ein echtes Chat-Eingabefeld und löst beim Gegenüber den „tippt gerade …"-Hinweis
+aus – eine für Dritte sichtbare Nebenwirkung. Der Pfad (`PasteProc`) entspricht
+dem des Haupt-Hotkeys; von Hand ist er in Sekunden geprüft.
 
 **Tray-Ballons sind nicht automatisiert prüfbar.** Weder über UIAutomation
 (`Windows.UI.Core.CoreWindow` im Desktop-Baum) noch über die Fenstersuche taucht
